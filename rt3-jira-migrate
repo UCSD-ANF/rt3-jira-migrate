@@ -1,0 +1,53 @@
+#!/bin/bash
+#       Original author misiming
+#       ref: http://forums.atlassian.com/message.jspa?messageID=257298698
+#       Changelog : 2009/04/20 - Initial creation
+#       Description : Export Data from Best Practical Request Tracker to a file for
+#       import in Atlassian Jira
+#       Set these variables
+#       We are going to need a scratch directory
+TMPDIR="/tmp"
+#       First do a search for tickets with id greater than '0'
+#       Then save that file to the path you've assigned RT_TSV
+
+# FILES
+RT_TSV="./rt3-alltix.tsv"
+OUTFILE="./results.tsv"
+
+# Database info
+DBUSER="root"
+DBPASS=`cat sqlpass`
+DBNAME="rt3"
+DBHOST="localhost"
+
+# paths to various utilties
+MYSQLBIN="/opt/csw/bin/mysql"
+AWKBIN="/opt/csw/bin/gawk"
+GREPBIN="/opt/csw/bin/ggrep"
+
+#       Need Column Headings NOTE these ARE tab Separated
+echo    "id     Queue   Subject Status  TimeEstimated   TimeWorked      TimeLeft        Priority\
+        FinalPriority   Owner   Requestors      Cc      AdminCc Due     Told    Created Resolved        LastUpdated     Summary" > $OUTFILE
+# loop through each ticket
+for i in `cat ${RT_TSV} | ${AWKBIN} -F "\t" '{print $1}' | $GREPBIN -vw id ` ; do 
+  echo "Ticket Id \$i is $i";
+
+  TICKET=`cat ${RT_TSV} | $GREPBIN -w "^${i}"`
+  echo "\$TICKET is $TICKET"
+
+  # generate summary
+  echo "select b.Content from Transactions a, Attachments b, Tickets c where a.id=b.TransactionId and a.ObjectId=c.id \
+        and b.ContentType LIKE \"text%\" and c.id=${i};" > ${TMPDIR}/comments.sql
+  #SUMMARY=`${MYSQLBIN} --max_allowed_packet=32M -u${DBUSER} -p${DBPASS} -h${DBHOST} ${DBNAME} < ${TMPDIR}/comments.sql| head -2 | tail -1 `
+  QUERYRESULTS=`${MYSQLBIN} --max_allowed_packet=32M -u${DBUSER} -p${DBPASS} -h${DBHOST} ${DBNAME} < ${TMPDIR}/comments.sql`
+
+  echo $QUERYRESULTS
+
+  SUMMARY=`echo $QUERYRESULTS | head -2 | tail -1`
+  # I couldn't figure out what this was for - output seems better with head/tail above
+  #UNKNOWN=`mysql --max_allowed_packet=32M -u${DBUSER} -p${DBPASS} ${DBNAME} < ${TMPDIR}/comments.sql | sed ':a;N;$!ba;s/\n/ /g'`
+  # also note that these two variables are separated by a TAB character
+  echo "$TICKET   $SUMMARY" >> $OUTFILE
+
+  echo -------------------- END $i -------------------
+done
