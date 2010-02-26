@@ -11,12 +11,12 @@ TMPDIR="/tmp"
 #       Then save that file to the path you've assigned RT_TSV
 
 # FILES
-RT_TSV="./rt3-alltix.tsv"
-OUTFILE="./results.tsv"
+RT_TSV="./data/rt3-alltix.tsv"
+OUTFILE="./data/results.tsv"
 
 # Database info
 DBUSER="root"
-DBPASS=`cat sqlpass`
+DBPASS=`cat ./data/sqlpass`
 DBNAME="rt3"
 DBHOST="localhost"
 
