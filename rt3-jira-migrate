@@ -1,53 +1,36 @@
-#!/bin/bash
-#       Original author misiming
-#       ref: http://forums.atlassian.com/message.jspa?messageID=257298698
-#       Changelog : 2009/04/20 - Initial creation
-#       Description : Export Data from Best Practical Request Tracker to a file for
-#       import in Atlassian Jira
-#       Set these variables
-#       We are going to need a scratch directory
-TMPDIR="/tmp"
-#       First do a search for tickets with id greater than '0'
-#       Then save that file to the path you've assigned RT_TSV
+#!/opt/csw/bin/perl
+#
+use warnings;
+use strict;
 
-# FILES
-RT_TSV="./data/rt3-alltix.tsv"
-OUTFILE="./data/results.tsv"
+use lib "/opt/rt3/lib";
 
-# Database info
-DBUSER="root"
-DBPASS=`cat ./data/sqlpass`
-DBNAME="rt3"
-DBHOST="localhost"
+use RT::Interface::CLI qw(CleanEnv loc);
 
-# paths to various utilties
-MYSQLBIN="/opt/csw/bin/mysql"
-AWKBIN="/opt/csw/bin/gawk"
-GREPBIN="/opt/csw/bin/ggrep"
+#Clean out all the nasties from the environment
+CleanEnv();
 
-#       Need Column Headings NOTE these ARE tab Separated
-#echo    "id     Queue   Subject Status  TimeEstimated   TimeWorked      TimeLeft        Priority\
-#        FinalPriority   Owner   Requestors      Cc      AdminCc Due     Told    Created Resolved        LastUpdated     Summary" > $OUTFILE
+# let's talk to RT
+use RT::Tickets;
+use Data::Dumper;
 
-ORIGHEADING=`head -1 ${RT_TSV}`
-echo "${ORIGHEADING}	Summary" > $OUTFILE
+# Load RT's config file
+RT::LoadConfig();
+
+# Connect to the database. Set up logging
+RT::Init();
+
+print loc('Hello!') . "\n";
+
+my $tickets= new RT::Tickets($RT::SystemUser);
+$tickets->OrderBy( FIELD => 'id', ORDER => 'ASC' );
+$tickets->LimitStatus(VALUE => 'new');
+
+# Print how many tickets we have
+my $count = $tickets->Count;
+print "\$tickets->Count is ".$tickets->Count."\n";
 
 
-# loop through each ticket
-for i in `cat ${RT_TSV} | ${AWKBIN} -F "\t" '{print $1}' | $GREPBIN -vw id ` ; do 
-
-  # Get the Ticket Id
-  TICKET=`cat ${RT_TSV} | $GREPBIN -w "^${i}"`
-  echo "\$TICKET is $TICKET"
-
-  # generate summary
-#  echo "select b.Content from Transactions a, Attachments b, Tickets c where a.id=b.TransactionId and a.ObjectId=c.id \
-  echo "SELECT b.Content FROM Transactions a, Attachments b, Tickets c WHERE a.id=b.TransactionId AND a.ObjectId=c.id \
-        AND b.ContentType=\"text/plain\" AND (b.Filename IS NULL OR b.Filename=\"\") AND c.id=${i};" > ${TMPDIR}/comments.sql
-  #SUMMARY=`${MYSQLBIN} --max_allowed_packet=32M -u${DBUSER} -p${DBPASS} -h${DBHOST} ${DBNAME} < ${TMPDIR}/comments.sql| head -2 | tail -1 `
-  QUERYRESULTS=`${MYSQLBIN} --max_allowed_packet=32M -u${DBUSER} -p${DBPASS} -h${DBHOST} ${DBNAME} < ${TMPDIR}/comments.sql`
-
-  SUMMARY=`echo $QUERYRESULTS | head -2 | tail -1`
-  echo "$TICKET	$SUMMARY" >> $OUTFILE
-
-done
+while (my $ticket = $tickets->Next) {
+  print $ticket->id . "\n"; 
+}
