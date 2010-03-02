@@ -3,34 +3,224 @@
 use warnings;
 use strict;
 
+package rt3jiramigrate;
+
+# Modify this to point to the Request Tracker installation location
 use lib "/opt/rt3/lib";
 
+# Need this to make sure we're writing clean XML
+use XML::Writer;
+use IO::File;
+
+# Import RT's API
 use RT::Interface::CLI qw(CleanEnv loc);
-
-#Clean out all the nasties from the environment
-CleanEnv();
-
-# let's talk to RT
 use RT::Tickets;
 use Data::Dumper;
 
+#
+# Configuration
+#
+
+# Output file location for JIRA Jelly
+my $outfilename="rt3-jira-migrate.out.jelly";
+
+#
+# Instance variables
+#
+
+# List of components to create
+my @components = [];
+# List of milestones to create
+my @milestones = [];
+# List of users to create
+my @users = [];
+
+# XML-Writer instance for Jelly file
+my $writer;
+# Output IO handle for XML-Writer
+my $output;
+
+# Map of RT users to Jira users
+my %usermap = (
+  rob           => "rnewman",
+);
+
+# Function to map RT users to Jira users
+sub mapUser($){
+  my $user=shift;
+  my $default = shift;
+
+  return $default if ($user eq "");
+
+  push (@users,$user) unless grep (/^$user$/,@users);
+
+  $user = $usermap{$user} if exists $usermap{$user};
+
+  return $user;
+}
+
+
+# Map of RT priority numbers to Jira priorities
+my %prioritymap = (
+  3     =>      "Major",
+  2     =>      "Critical",
+  4     =>      "Minor",
+  1     =>      "Blocker",
+  5     =>      "Trivial",
+  99    =>      "Blocker",
+  0     =>      "Trivial",
+  15    =>      "Major",
+  10    =>      "Major",
+);
+
+# Function to map RT priorities to Jira Priorities
+sub mapPriority($){
+  my $priority=shift;
+  my $default = "Minor";
+  return $default if ($priority eq "");
+
+  if ( exists($prioritymap{$priority}) ){
+    $priority = $prioritymap{$priority};
+  } else {
+    print STDERR "Fallback to Jira priority $default for RT priority $priority\n";
+    $priority = $default;
+  }
+  return $priority;
+}
+
+my %queuemap = (
+  General       => "SYS",
+  LACOFD        => "LACOFD",
+  ROADNet       => "ROADNET",
+  ANZA          => "ANZA",
+  SysAdmin      => "SYS",
+  webapps       => "WWW",
+  Backups       => "BACKUP",
+  WebDev        => "WWW",
+  USArray       => "TA",
+  HiSeasNet     => "HSN",
+  PBO           => "PBO",
+);
+
+sub mapQueueToProject($){
+  my $queue=shift;
+  my $default="SYS";
+
+  return $default if ($queue eq "");
+
+  if (exists $queuemap{$queue}) {
+    $queue=$queuemap{$queue};
+  } else {
+    print STDERR "Fallback to $default project for RT queue $queue\n";
+    $queue=$default;
+  }
+  return $queue;
+}
+
+sub initRT {
+# Clean out all the nasties from the environment
+  CleanEnv();
 # Load RT's config file
-RT::LoadConfig();
-
+  RT::LoadConfig();
 # Connect to the database. Set up logging
-RT::Init();
+  RT::Init();
 
-print loc('Hello!') . "\n";
+  return
+}
 
+sub startJellyOutput () {
+# Start outputting XML
+  $output = new IO::File(">$outfilename");
+  $writer = new XML::Writer(OUTPUT => $output, 
+    ENCODING => 'utf-8', NEWLINES => 'true');
+
+  $writer->xmlDecl();
+
+# Start Writing Jelly
+  $writer->startTag('JiraJelly', 'xmlns:jira' => 'jelly:com.atlassian.jira.jelly.enterprise.JiraTagLib');
+
+  return;
+}
+
+sub finishJellyOutput () {
+# Done with Jelly
+  $writer->endTag('JiraJelly');
+
+# Finish outputting XML
+  $writer->end();
+  $output->close();
+}
+
+sub processTicket($) {
+  my $ticket = shift;
+  print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
+
+  my $transactions = $ticket->Transactions;
+
+  my $ownerUser = new RT::User($RT::SystemUser);
+  $ownerUser->Load($ticket->Owner);
+
+  my $requestors = $ticket->Requestors->UserMembersObj;
+  my $firstrequestor = "";
+  $firstrequestor = $requestors->Next->Name unless ($requestors->Count < 1);
+
+  # Create Issue
+  $writer->startTag('jira:CreateIssue', 
+    'project-key' => mapQueueToProject($ticket->QueueObj->Name),
+    issueKeyVar => 'key',
+    summary => $ticket->Subject,
+    priority => mapPriority($ticket->Priority),
+    reporter => mapUser($firstrequestor),
+    assignee => mapUser($ownerUser->Name),
+#    description => 
+  );
+
+  # Insert RT3 Ticket Number Custom Field
+  $writer->emptyTag('jira:AddCustomFieldValue',
+    'RT3 Ticket Number' => $ticket->Id);
+
+  my $CustomFields = $ticket->CustomFields;
+  printf STDERR "There are %s custom fields for ticket \#%s\n", $CustomFields->Count, $ticket->Id;
+  while ( my $CustomField = $CustomFields->Next ) {
+    my $Values = $ticket->CustomFieldValues( $CustomField->Id );
+    my $count = $Values->Count;
+    print STDERR "Processing CustomField ".$CustomField->Name."\n";
+    while ( my $Value = $Values->Next ) {
+      $writer->emptyTag('jira:AddCustomFieldValue',
+        id=>$CustomField->Name, value=> $Value->Content);
+    }
+  }
+
+  # End Issue
+  $writer->endTag('jira:CreateIssue');
+}
+
+######### MAIN #########
+
+# Initilize our connection to RT
+initRT();
+
+# print banner
+print STDERR loc('Hello!') . "\n";
+
+# Get a list of all tickets in RT
+# Since RT::Tickets inherits from DBIx::SearchBuilder, no results show up
+# unless search conditions are specified.
 my $tickets= new RT::Tickets($RT::SystemUser);
-$tickets->OrderBy( FIELD => 'id', ORDER => 'ASC' );
-$tickets->LimitStatus(VALUE => 'new');
+$tickets->LimitId( OPERATOR => '>', VALUE => '0');
 
 # Print how many tickets we have
 my $count = $tickets->Count;
-print "\$tickets->Count is ".$tickets->Count."\n";
+print STDERR "\$tickets->Count is ".$tickets->Count."\n";
 
+# get ready to write Jelly
+startJellyOutput();
 
+# Issues
+$writer->comment('ISSUES');
 while (my $ticket = $tickets->Next) {
-  print $ticket->id . "\n"; 
+  processTicket($ticket);
 }
+
+# finish up our XML document
+finishJellyOutput();
