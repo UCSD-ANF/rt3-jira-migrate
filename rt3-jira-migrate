@@ -21,24 +21,18 @@ use Data::Dumper;
 # Configuration
 #
 
-# Output file location for JIRA Jelly
-my $outfilename="rt3-jira-migrate.out.jelly";
+my $outfilename="rt3-jira-migrate.out.jelly"; # Output file location for JIRA Jelly
 
 #
 # Instance variables
 #
 
-# List of components to create
-my @components = [];
-# List of milestones to create
-my @milestones = [];
-# List of users to create
-my @users = [];
+my @components = []; # List of components to create
+my @milestones = []; # List of milestones to create
+my @users = []; # List of users to create
 
-# XML-Writer instance for Jelly file
-my $writer;
-# Output IO handle for XML-Writer
-my $output;
+my $writer; # XML-Writer instance for Jelly file
+my $output; # Output IO handle for XML-Writer
 
 # Map of RT users to Jira users
 my %usermap = (
@@ -102,6 +96,7 @@ my %queuemap = (
   PBO           => "PBO",
 );
 
+# Map RT Quenename to Jira project Key
 sub mapQueueToProject($){
   my $queue=shift;
   my $default="SYS";
@@ -117,13 +112,11 @@ sub mapQueueToProject($){
   return $queue;
 }
 
+# Initilize RT
 sub initRT {
-# Clean out all the nasties from the environment
-  CleanEnv();
-# Load RT's config file
-  RT::LoadConfig();
-# Connect to the database. Set up logging
-  RT::Init();
+  CleanEnv(); # Clean out all the nasties from the environment
+  RT::LoadConfig(); # Load RT's config file
+  RT::Init(); # Connect to the database. Set up logging
 
   return
 }
@@ -184,7 +177,7 @@ sub processTicket($) {
   while ( my $CustomField = $CustomFields->Next ) {
     my $Values = $ticket->CustomFieldValues( $CustomField->Id );
     my $count = $Values->Count;
-    print STDERR "Processing CustomField ".$CustomField->Name."\n";
+    print STDERR "Processing CustomField " . $CustomField->Name . "\n";
     while ( my $Value = $Values->Next ) {
       $writer->emptyTag('jira:AddCustomFieldValue',
         id=>$CustomField->Name, value=> $Value->Content);
