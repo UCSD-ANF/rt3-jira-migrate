@@ -55,6 +55,28 @@ sub mapUser($){
   return $user;
 }
 
+# Remove invalid XML unicode characters
+# This function ensures that the output string has only valid XML Unicode 
+# characters as specified by the XML 1.0 standard. For reference, please 
+# see the standard: 
+#   http://www.w3.org/TR/REC-xml/#charsets
+#
+# This function will return an empty string if the input is null or empty.
+#
+# Solution cobbled together based on this post:
+# http://cse-mjmcl.cse.bris.ac.uk/blog/2007/02/14/1171465494443.html
+sub cleanXML($) {
+  my $input=shift;
+  my $output=$input; # string to hold the output
+  unless ($input) {
+    print STDERR "cleanXML: no input\n";
+    return '';
+  }
+
+  $output =~ s/[^\x{0009}\x{000A}\x{000D}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}\x{10000}-\x{10FFFF}]//g;
+  printf STDERR "cleanXML: removed %d chars from input\n", length($input)-length($output);
+  return $output;
+}
 
 # Map of RT priority numbers to Jira priorities
 my %prioritymap = (
@@ -127,7 +149,11 @@ sub startJellyOutput () {
 # Start outputting XML
   $output = new IO::File(">$outfilename");
   $writer = new XML::Writer(OUTPUT => $output, 
-    ENCODING => 'utf-8', NEWLINES => 'true');
+    ENCODING => 'utf-8',
+    #   NEWLINES => 'true',
+    DATA_MODE => 'true',
+    DATA_INDENT => '2'
+  );
 
   $writer->xmlDecl();
 
@@ -175,7 +201,7 @@ sub jellyCreateTicket($) {
     priority => mapPriority($ticket->Priority),
     reporter => mapUser($firstrequestor),
     assignee => mapUser($ownerUser->Name),
-    description => getRTTicketDescription($ticket),
+    description => cleanXML(getRTTicketDescription($ticket)),
   );
 
   # Insert RT3 Ticket Number Custom Field
@@ -199,28 +225,49 @@ sub jellyCreateTicket($) {
 
 # foreach comment: generate jelly script to add a comment to existing ticket
 sub processTicketTransactions($) {
-  my $Ticket=shift;
-
-  my $Transactions = $Ticket->Transactions;
+  my $Ticket=shift;     # input RT::Ticket object
+  my $Transactions = $Ticket->Transactions; # Transactions from the current ticket
+  my $type;             # transaction type
 
   while (my $Transaction = $Transactions->Next) {
-    next unless $Transaction->ContentObj; # Bail out if this has no content
 
-    my $type=$Transaction->Type;
-    next unless ( $type =~ /^(Create|Comment|Correspond)$/i );
+    $type=$Transaction->Type;
+    printf STDERR "Transaction %d has type \"%s\"\n", $Transaction->Id, $type;
 
-    my $transuser = &rt3jiramigrate::mapUser($Transaction->CreatorObj->Name);
-    my $transcontent = $Transaction->Content;
-    my $date_obj = RT::Date->new( RT->SystemUser );
-    $date_obj->Set(
-      Format => 'sql',
-      Value  => $Transaction->Created,
-    );
-    my $transdate = strftime("%Y-%m-%d %H:%M:%S.0", 
-      @{ [ localtime( $date_obj->Unix ) ] } );
+    if ( $type =~ /^(Create|Comment|Correspond)$/i ) {
+      # Process transaction as a comment
 
-    jellyAddComment($transuser,$transdate,$transcontent);
+      next unless $Transaction->ContentObj; # Bail out if this has no content
+
+      my $transuser = &rt3jiramigrate::mapUser($Transaction->CreatorObj->Name);
+      my $transcontent = $Transaction->Content;
+      my $transdate = fmtDateSQL2Jelly($Transaction->Created);
+
+      # for some reason there are some Comments in our queue that have no actual 
+      # text content, but there is a ContentObj associated with them.
+      # Skip those transactions with the null string as content
+      next unless $transcontent;
+
+      jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
+    }
   }
+}
+
+# Format a Date in SQL format in a Jira Jelly-ready format
+sub fmtDateSQL2Jelly ($) {
+  my $sqldate=shift;    # input date in SQL date format
+  my $date_obj;         # RT::Date parser
+  my $result;           # output in Jelly format
+
+  $date_obj = RT::Date->new( RT->SystemUser ); 
+  $date_obj->Set(
+    Format => 'sql',
+    Value  => $sqldate,
+  );
+  $result = strftime("%Y-%m-%d %H:%M:%S.0", 
+    @{ [ localtime( $date_obj->Unix ) ] } );
+
+  return $result;
 }
 
 # Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
@@ -233,7 +280,7 @@ sub jellyAddComment($$$){
     'issue-key'=>'${key}',
     commenter=>$commenter,
     date=>$date,
-    comment=>$comment);
+    comment=>&rt3jiramigrate::cleanXML($comment));
 }
 
 sub processTicket($) {
@@ -258,6 +305,9 @@ print STDERR loc('Hello!') . "\n";
 # unless search conditions are specified.
 my $tickets= new RT::Tickets($RT::SystemUser);
 $tickets->LimitId( OPERATOR => '>', VALUE => '0');
+# Comment previous line and uncomment the following two lines for test tix
+#$tickets->LimitId(OPERATOR => '>', VALUE => '1322');
+#$tickets->LimitId(OPERATOR => '<', VALUE => '1325');
 
 # Print how many tickets we have
 my $count = $tickets->Count;
