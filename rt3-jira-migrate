@@ -17,6 +17,8 @@ use RT::Interface::CLI qw(CleanEnv loc);
 use RT::Tickets;
 use Data::Dumper;
 
+use POSIX;
+
 #
 # Configuration
 #
@@ -156,10 +158,8 @@ sub getRTTicketDescription($){
   return $Transaction->Content;
 }
 
-sub processTicket($) {
+sub jellyCreateTicket($) {
   my $ticket = shift;
-  print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
-
   my $ownerUser = new RT::User($RT::SystemUser);
   $ownerUser->Load($ticket->Owner);
 
@@ -195,6 +195,55 @@ sub processTicket($) {
 
   # End Issue
   $writer->endTag('jira:CreateIssue');
+}
+
+# This function must be called right after jellyCreateTicket, as it depends on
+# the Jelly variable "key" set by the issueKeyVar parameter to jira:CreateIssue
+sub processTicketTransactions($) {
+  # foreach comment: generate jelly script to add a comment to existing ticket
+  my $Ticket=shift;
+
+  my $Transactions = $Ticket->Transactions;
+
+  while (my $Transaction = $Transactions->Next) {
+    next unless $Transaction->ContentObj; # Bail out if this has no content
+
+    my $type=$Transaction->Type;
+    next unless ( $type =~ /^(Create|Comment|Correspond)$/i );
+
+    my $transuser = &rt3jiramigrate::mapUser($Transaction->CreatorObj->Name);
+    my $transcontent = $Transaction->Content;
+    my $date_obj = RT::Date->new( RT->SystemUser );
+    $date_obj->Set(
+      Format => 'sql',
+      Value  => $Transaction->Created,
+    );
+    my $transdate = strftime("%Y-%m-%d %H:%M:%S.0", 
+      @{ [ localtime( $date_obj->Unix ) ] } );
+
+    jellyAddComment($transuser,$transdate,$transcontent);
+  }
+}
+
+sub jellyAddComment($$$){
+  my $commenter = shift;
+  my $date = shift;
+  my $comment = shift;
+
+  $writer->emptyTag('jira:AddComment',
+    'issue-key'=>'${key}',
+    commenter=>$commenter,
+    date=>$date,
+    comment=>$comment);
+}
+
+sub processTicket($) {
+  my $ticket = shift;
+  print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
+
+  &jellyCreateTicket($ticket);
+
+  &rt3jiramigrate::processTicketTransactions($ticket);
 }
 
 ######### MAIN #########
