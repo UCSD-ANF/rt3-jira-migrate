@@ -144,11 +144,21 @@ sub finishJellyOutput () {
   $output->close();
 }
 
+sub getRTTicketDescription($){
+  my $Ticket = shift;
+
+  my $Transactions = $Ticket->Transactions;
+
+  return unless $Transactions->Count > 0;
+
+  my $Transaction = $Transactions->First;
+
+  return $Transaction->Content;
+}
+
 sub processTicket($) {
   my $ticket = shift;
   print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
-
-  my $transactions = $ticket->Transactions;
 
   my $ownerUser = new RT::User($RT::SystemUser);
   $ownerUser->Load($ticket->Owner);
@@ -165,7 +175,7 @@ sub processTicket($) {
     priority => mapPriority($ticket->Priority),
     reporter => mapUser($firstrequestor),
     assignee => mapUser($ownerUser->Name),
-#    description => 
+    description => getRTTicketDescription($ticket),
   );
 
   # Insert RT3 Ticket Number Custom Field
