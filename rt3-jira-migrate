@@ -197,10 +197,8 @@ sub jellyCreateTicket($) {
   $writer->endTag('jira:CreateIssue');
 }
 
-# This function must be called right after jellyCreateTicket, as it depends on
-# the Jelly variable "key" set by the issueKeyVar parameter to jira:CreateIssue
+# foreach comment: generate jelly script to add a comment to existing ticket
 sub processTicketTransactions($) {
-  # foreach comment: generate jelly script to add a comment to existing ticket
   my $Ticket=shift;
 
   my $Transactions = $Ticket->Transactions;
@@ -225,6 +223,7 @@ sub processTicketTransactions($) {
   }
 }
 
+# Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
 sub jellyAddComment($$$){
   my $commenter = shift;
   my $date = shift;
