@@ -170,7 +170,7 @@ sub processTicket($) {
 
   # Insert RT3 Ticket Number Custom Field
   $writer->emptyTag('jira:AddCustomFieldValue',
-    'RT3 Ticket Number' => $ticket->Id);
+    id=>'RT3 Ticket Number', value=>$ticket->Id);
 
   my $CustomFields = $ticket->CustomFields;
   while ( my $CustomField = $CustomFields->Next ) {
