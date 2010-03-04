@@ -184,6 +184,21 @@ sub mapQueueToProject($){
   return $queue;
 }
 
+my %cfmap = (
+  "Documentation Link" => "RT3 Documentation Link",
+  "Vendor Ticket #" => "Vendor Ticket Id",
+  "Sat Station" => "Satellite Station",
+);
+
+# Map RT Custom Fields to Jira Custom Fields
+sub mapCF ($) {
+  my $field=shift;
+
+  $field=$cfmap{$field} if (exists $cfmap{$field});
+
+  return $field;
+}
+
 # Initilize RT
 sub initRT {
   CleanEnv(); # Clean out all the nasties from the environment
@@ -254,7 +269,7 @@ sub jellyCreateTicket($) {
 
   # Insert RT3 Ticket Number Custom Field
   $writer->emptyTag('jira:AddCustomFieldValue',
-    id=>'RT3 Ticket Number', value=>$ticket->Id);
+    name=>'RT3 Ticket Number', value=>$ticket->Id);
 
   my $CustomFields = $ticket->CustomFields;
   while ( my $CustomField = $CustomFields->Next ) {
@@ -263,7 +278,7 @@ sub jellyCreateTicket($) {
     #printf STDERR "Processing CustomField %s (%d values)\n", $CustomField->Name, $count;
     while ( my $Value = $Values->Next ) {
       $writer->emptyTag('jira:AddCustomFieldValue',
-        id=>$CustomField->Name, value=> $Value->Content);
+        name=>mapCF($CustomField->Name), value=> $Value->Content);
     }
   }
 
