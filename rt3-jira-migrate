@@ -23,7 +23,10 @@ use POSIX;
 # Configuration
 #
 
-my $outfilename="rt3-jira-migrate.out.jelly"; # Output file location for JIRA Jelly
+#my $outfilename="rt3-jira-migrate.out.jelly"; # Output file location for JIRA Jelly
+my $outfnprefix="rt3-jira-migrate-";
+my $outfnsuffix=".jelly";
+my $numtixperfile=100; # Maximum number of tickets per file
 
 #
 # Instance variables
@@ -209,9 +212,10 @@ sub initRT {
   return
 }
 
-sub startJellyOutput () {
-# Start outputting XML
-  $output = new IO::File(">$outfilename");
+sub startJellyOutput ($) {
+  my $fn=shift;
+  # Start outputting XML
+  $output = new IO::File(">$fn");
   $writer = new XML::Writer(OUTPUT => $output, 
     ENCODING => 'utf-8',
     #   NEWLINES => 'true',
@@ -502,16 +506,34 @@ $tickets->LimitId( OPERATOR => '>', VALUE => '0');
 #$tickets->LimitId(OPERATOR => '>', VALUE => '1300');
 #$tickets->LimitId(OPERATOR => '<', VALUE => '1350');
 
-# Print how many tickets we have
-my $count = $tickets->Count;
-print STDERR "\$tickets->Count is ".$tickets->Count."\n";
+my $numtix = $tickets->Count; #total number of tickets
+my $numfiles = &POSIX::ceil($numtix/$numtixperfile);
+my $curfileidx=1; # current file index
 
-# get ready to write Jelly
-startJellyOutput();
+# Print how many tickets we have
+print STDERR "\$tickets->Count is ".$numtix."\n";
+
 
 # Issues
-$writer->comment('ISSUES');
 while (my $ticket = $tickets->Next) {
+  if (($tickets->_ItemsCounter-1)%$numtixperfile == 0){
+    # close the existing file if any
+    if ($writer) {
+      finishJellyOutput ();
+    }
+
+    # Start a new file
+    # get ready to write Jelly
+    my $filename = sprintf("%s%d_of_%d%s",
+      $outfnprefix,
+      $curfileidx,
+      $numfiles,
+      $outfnsuffix
+    );
+    printf STDERR "Starting new file \"%s\"\n", $filename;
+    startJellyOutput($filename);
+    $curfileidx++; #increment the current file counter
+  }
   processTicket($ticket);
 }
 
