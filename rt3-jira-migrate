@@ -108,6 +108,24 @@ sub cleanXML($) {
   return $output;
 }
 
+# Additional escapes to remove characters that cause problems with Jelly parsing
+sub escapeXML($) {
+  $_=shift;
+  my $input=$_;
+
+  s/&/&amp;/g;
+  s/"/&quot;/g;
+  s/</&lt;/g;
+  s/>/&gt;/g;
+  s/\$/&#36;/g;
+  s/\*/&#x2a/g;
+  s/\{/&#123/g;
+  s/\]/&#125/g;
+  s/\+/&#43/g;
+
+  return $_;
+}
+
 # Map of RT priority numbers to Jira priorities
 my %prioritymap = (
   3     =>      "Major",
@@ -231,7 +249,7 @@ sub jellyCreateTicket($) {
     priority => mapPriority($ticket->Priority),
     reporter => mapUser($firstrequestor),
     assignee => mapUser($ownerUser->Name),
-    description => cleanXML(getRTTicketDescription($ticket)),
+    description => escapeXML(cleanXML(getRTTicketDescription($ticket))),
   );
 
   # Insert RT3 Ticket Number Custom Field
@@ -436,7 +454,7 @@ sub jellyAddComment($$$){
     'issue-key'=>'${key}',
     commenter=>$commenter,
     date=>$date,
-    comment=>&rt3jiramigrate::cleanXML($comment));
+    comment=>escapeXML(cleanXML($comment)));
 }
 
 sub processTicket($) {
