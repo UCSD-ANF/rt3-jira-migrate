@@ -265,6 +265,8 @@ sub jellyCreateTicket($) {
     reporter => mapUser($firstrequestor),
     assignee => mapUser($ownerUser->Name),
     description => escapeXML(cleanXML(getRTTicketDescription($ticket))),
+    created => fmtDateSQL2Jelly($ticket->Created),
+    updated => fmtDateSQL2Jelly($ticket->LastUpdated),
   );
 
   # Insert RT3 Ticket Number Custom Field
@@ -468,7 +470,8 @@ sub jellyAddComment($$$){
   $writer->emptyTag('jira:AddComment',
     'issue-key'=>'${key}',
     commenter=>$commenter,
-    date=>$date,
+    created=>$date,
+    updated=>$date,
     comment=>escapeXML(cleanXML($comment)));
 }
 
