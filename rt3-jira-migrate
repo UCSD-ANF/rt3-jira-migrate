@@ -29,9 +29,9 @@ my $outfilename="rt3-jira-migrate.out.jelly"; # Output file location for JIRA Je
 # Instance variables
 #
 
-my @components = []; # List of components to create
-my @milestones = []; # List of milestones to create
-my @users = []; # List of users to create
+my @components; # List of components to create
+my @milestones; # List of milestones to create
+my @users; # List of users to create
 
 my $writer; # XML-Writer instance for Jelly file
 my $output; # Output IO handle for XML-Writer
@@ -39,6 +39,11 @@ my $output; # Output IO handle for XML-Writer
 # Map of RT users to Jira users
 my %usermap = (
   rob           => "rnewman",
+  'lastiz@ucsd.edu' => "lastiz",
+  'RT_System' => "davis",
+  'Nobody' => "davis",
+  'rmellors@geology.sdsu.edu' => "vernon",
+  'ricky@sanrad.com' => "davis",
 );
 
 # Function to map RT users to Jira users
@@ -46,12 +51,13 @@ sub mapUser($){
   my $user=shift;
   my $default = shift;
 
-  return $default if ($user eq "");
+  die if ref ($user);
 
-  push (@users,$user) unless grep (/^$user$/,@users);
+  return $default if ($user eq "");
 
   $user = $usermap{$user} if exists $usermap{$user};
 
+  push (@users,$user) unless grep (/^$user$/,@users);
   return $user;
 }
 
@@ -74,7 +80,7 @@ sub cleanXML($) {
   }
 
   $output =~ s/[^\x{0009}\x{000A}\x{000D}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}\x{10000}-\x{10FFFF}]//g;
-  printf STDERR "cleanXML: removed %d chars from input\n", length($input)-length($output);
+  #printf STDERR "cleanXML: removed %d chars from input\n", length($input)-length($output);
   return $output;
 }
 
@@ -164,7 +170,7 @@ sub startJellyOutput () {
 }
 
 sub finishJellyOutput () {
-# Done with Jelly
+  # Done with Jelly
   $writer->endTag('JiraJelly');
 
 # Finish outputting XML
@@ -212,7 +218,7 @@ sub jellyCreateTicket($) {
   while ( my $CustomField = $CustomFields->Next ) {
     my $Values = $ticket->CustomFieldValues( $CustomField->Id );
     my $count = $Values->Count;
-    printf STDERR "Processing CustomField %s (%d values)\n", $CustomField->Name, $count;
+    #printf STDERR "Processing CustomField %s (%d values)\n", $CustomField->Name, $count;
     while ( my $Value = $Values->Next ) {
       $writer->emptyTag('jira:AddCustomFieldValue',
         id=>$CustomField->Name, value=> $Value->Content);
@@ -232,25 +238,151 @@ sub processTicketTransactions($) {
   while (my $Transaction = $Transactions->Next) {
 
     $type=$Transaction->Type;
-    printf STDERR "Transaction %d has type \"%s\"\n", $Transaction->Id, $type;
+    #printf STDERR "Transaction %d has type \"%s\"\n", $Transaction->Id, $type;
 
     if ( $type =~ /^(Create|Comment|Correspond)$/i ) {
       # Process transaction as a comment
-
-      next unless $Transaction->ContentObj; # Bail out if this has no content
-
-      my $transuser = &rt3jiramigrate::mapUser($Transaction->CreatorObj->Name);
-      my $transcontent = $Transaction->Content;
-      my $transdate = fmtDateSQL2Jelly($Transaction->Created);
-
-      # for some reason there are some Comments in our queue that have no actual 
-      # text content, but there is a ContentObj associated with them.
-      # Skip those transactions with the null string as content
-      next unless $transcontent;
-
-      jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
+      Transaction2Comment($Transaction);
+    }
+    elsif ( ($type =~ /Status/) && ($Transaction->Field eq 'Status') ) {
+      # Process transaction as a workflow transition
+      Transaction2WorkflowTransition($Transaction);
+    }
+    elsif ($type =~ /^(CommentEmailRecord|EmailRecord|AddWatcher|DelWatcher|Give|Take|Steal|Set|AddLink|DeleteLink|CustomField|Told|AddReminder|ResolveReminder|Told)$/i ) {
+      # transactions we know about that we can skip
+    }
+    else {
+      # Skip unknown transaction types
+      printf STDERR "Skipping unknown RT transaction type %s in transaction %d\n", $type, $Transaction->Id;
     }
   }
+}
+
+sub jellyWkFlowStartProgress($){
+  my $user=shift;
+  $writer->emptyTag('jira:TransitionWorkflow',
+    key => '${key}',
+    user => $user,
+    workflowAction => 'Start Progress',
+  );
+}
+
+sub jellyWkFlowStopProgress($){
+  my $user=shift;
+  $writer->emptyTag('jira:TransitionWorkflow',
+    key => '${key}',
+    user => $user,
+    workflowAction => 'Stop Progress',
+  );
+}
+
+sub jellyWkFlowCloseIssue($$){
+  my $user=shift;
+  my $resolution=shift;
+
+  $writer->emptyTag('jira:TransitionWorkflow',
+    key => '${key}',
+    user => $user,
+    workflowAction => 'Close Issue',
+    resolution => $resolution,
+  );
+}
+
+sub jellyWkFlowReopenIssue($){
+  my $user=shift;
+  $writer->emptyTag('jira:TransitionWorkflow',
+    key => '${key}',
+    user => $user,
+    workflowAction => 'Reopen Issue',
+  );
+}
+
+# RT states to Jira resolutions
+my %resolutionmap = (
+  rejected => "Won't Fix",
+  deleted => "Won't Fix",
+  resolved => "Fixed",
+);
+
+sub mapResolution($){
+  my $rtstatus=shift;
+  my $res="Fixed";
+
+  $res = $resolutionmap{$rtstatus} if exists $resolutionmap{$rtstatus};
+  return $res;
+}
+
+# process a transaction that results in a Jira comment
+sub Transaction2Comment($) {
+  my $Transaction=shift;
+
+  return 1 unless $Transaction->ContentObj; # Bail out if this has no content
+
+  my $transuser = &rt3jiramigrate::mapUser($Transaction->CreatorObj->Name);
+  my $transcontent = $Transaction->Content;
+  my $transdate = fmtDateSQL2Jelly($Transaction->Created);
+
+  # for some reason there are some Comments in our queue that have no actual 
+  # text content, but there is a ContentObj associated with them.
+  # Skip those transactions with the null string as content
+  return 1 unless $transcontent;
+  &jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
+  return 0;
+}
+
+#process a transaction that results in a Jira Workflow transition
+sub Transaction2WorkflowTransition($) {
+  my $Transaction = shift;
+  my $oldstatus = $Transaction->OldValue;
+  my $newstatus = $Transaction->NewValue;
+  my $user = mapUser($Transaction->CreatorObj->Name);
+
+  if ( $oldstatus =~ /^(new|stalled)$/ ) {
+    # Jira Issue should be in an "Open" state
+    if ( $newstatus =~ /^(new|stalled)$/ ) {
+      return 1;# do nothing
+    }
+    elsif ($newstatus eq 'open') {
+      jellyWkFlowStartProgress($user);
+      return 1;
+    }
+    elsif ( $newstatus =~ /^(rejected|deleted|resolved)$/ ) {
+      jellyWkFlowCloseIssue($user,&mapResolution($newstatus));
+      return 1;
+    }
+  } 
+  elsif ($oldstatus eq 'open') {
+    # Jira Issue should be in an "In Progress" state
+    if ( $newstatus =~ /^(new|stalled)$/ ){
+      jellyWkFlowStopProgress($user);
+      return 1;
+    }
+    elsif ( $newstatus =~ /^(rejected|deleted|resolved)$/ ) {
+      jellyWkFlowCloseIssue($user,mapResolution($newstatus));
+      return 1;
+    }
+  }
+  elsif ($oldstatus =~ /^(rejected|resolved|deleted)$/) {
+    # Jira Issue should be in a closed state
+    if ( $newstatus eq "new" ) {
+      jellyWkFlowReopenIssue($user);
+      return 1;
+    }
+    elsif ( $newstatus eq "open" ) {
+      jellyWkFlowReopenIssue($user);
+      jellyWkFlowStartProgress($user);
+      return 1;
+    }
+    elsif ( $oldstatus eq "rejected" && $newstatus eq "resolved" ){
+      # do nothing - handle ticket #369 which should have stayed in "rejected" state
+      return 1;
+    }
+  }
+
+
+  # Unknown RT status
+  printf STDERR "ERROR: Transaction %d -- Unhandled RT Status Transition %s -> %s", $Transaction->Id, $oldstatus, $newstatus;
+  return 1;
 }
 
 # Format a Date in SQL format in a Jira Jelly-ready format
@@ -298,7 +430,7 @@ sub processTicket($) {
 initRT();
 
 # print banner
-print STDERR loc('Hello!') . "\n";
+# print STDERR loc('Hello!') . "\n";
 
 # Get a list of all tickets in RT
 # Since RT::Tickets inherits from DBIx::SearchBuilder, no results show up
@@ -306,8 +438,8 @@ print STDERR loc('Hello!') . "\n";
 my $tickets= new RT::Tickets($RT::SystemUser);
 $tickets->LimitId( OPERATOR => '>', VALUE => '0');
 # Comment previous line and uncomment the following two lines for test tix
-#$tickets->LimitId(OPERATOR => '>', VALUE => '1322');
-#$tickets->LimitId(OPERATOR => '<', VALUE => '1325');
+#$tickets->LimitId(OPERATOR => '>', VALUE => '1300');
+#$tickets->LimitId(OPERATOR => '<', VALUE => '1350');
 
 # Print how many tickets we have
 my $count = $tickets->Count;
@@ -324,3 +456,7 @@ while (my $ticket = $tickets->Next) {
 
 # finish up our XML document
 finishJellyOutput();
+
+print STDERR "The following users should be created:\n\t";
+print STDERR join "\n\t", @users;
+print STDERR "\n";
