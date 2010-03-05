@@ -23,18 +23,29 @@ use POSIX;
 # Configuration
 #
 
-#my $outfilename="rt3-jira-migrate.out.jelly"; # Output file location for JIRA Jelly
-my $outfnprefix="rt3-jira-migrate-";
-my $outfnsuffix=".jelly";
+# output file format variables
+#
+# Because the Jelly parser is a huge memory hog, it can't handle all 1700+
+# tickets at once. The following variables control the automatic splitting of
+# output files.
+my $outfnprefix="rt3-jira-migrate-"; # output file prefix
+my $outfnsuffix=".jelly"; # output file suffix
 my $numtixperfile=100; # Maximum number of tickets per file
 
+# The username to use as the reporter when an RT transaction is from a non-JIRA user
+my $anonuser = "anon";
+
+# The Jira custom field used to track the RT ticket number
+my $ticketfn="RT3 Ticket Number";
 #
-# Instance variables
+# Reporting variables
 #
 
 my @components; # List of components to create
 my @milestones; # List of milestones to create
-my @users; # List of users to create
+my @users; # List of users that should exist in Jira before import
+my @anonusers; # List of RT users that are treated as the anonymous user
+my %customfields; # LIst of customfields that should exist in Jira before import
 
 my $writer; # XML-Writer instance for Jelly file
 my $output; # Output IO handle for XML-Writer
@@ -75,18 +86,68 @@ my %usermap = (
 );
 
 # Function to map RT users to Jira users
-sub mapUser($){
-  my $user=shift;
-  my $default = shift;
+#
+# Since we are not creating new Jira users automatically, any unknown email
+# address needs to be mapped to an anonymous user. This mimics the behavior of
+# the Jira "Mail Service Handler" with createusers="false" and 
+# reporterusername="anon"
+# This function expects to get passed an RT::User object
+sub mapUser($) {
+  my $rtuser=shift; # an RT::User object
+  my $name; #bare RT username
+  my $jirauser; #username to return
 
-  die if ref ($user);
+  $name=$rtuser->Name; # Cache the username from the RT::User object
+  if ($rtuser->Privileged){
+    # If the user is a privileged RT user, we assume the user exists in Jira,
+    # rather than returning an anonymous user
+    $jirauser=$name;
+    # We then check to see if the RT username has been mapped to a different
+    # Jira username
+    if (exists $usermap{$name}){
+      $jirauser=$usermap{$name};
+    }
+  }
+  else {
 
-  return $default if ($user eq "");
+    # The user is not a privileged RT user
+    # but it may be mapped to a real jira user
+    # Remap the username if the username is in the map 
+    if (exists $usermap{$name}){
+      $jirauser=$usermap{$name};
+    }
+    else {
+      # We have an anonymous user. Log it.
+      $jirauser=$anonuser;
+      push (@anonusers,$name) unless grep (/^$name$/,@anonusers);
+    }
 
-  $user = $usermap{$user} if exists $usermap{$user};
+  }
+  # Log the user mapping and return
+  push (@users,$jirauser) unless grep (/^$jirauser$/,@users);
+  return $jirauser;
+}
 
-  push (@users,$user) unless grep (/^$user$/,@users);
-  return $user;
+# isAnon takes a ref to a RT::User object and determines if the user is an anonymous user.
+# The following logic applies:
+# if RT::User says it's a privileged user in RT, isAnon returns false
+# elsif mapUser has an entry for the RTUser that is not $anonuser, isAnon returns false
+# else isAnon returns true
+sub isAnon($){
+  my $rtUser=shift;
+  my $name = $rtUser->Name;
+
+  if ($rtUser->Privileged) {
+    return 0;
+  }
+  elsif ( grep (/^$name$/,keys(%usermap))) {
+    # user was found in the usermap, so we'll assume it's in Jira
+    return 0;
+  } 
+
+  # User is anonymous
+  push (@anonusers, $name) unless grep (/^$name$/,@anonusers);
+  return 1;
 }
 
 # Remove invalid XML unicode characters
@@ -249,6 +310,7 @@ sub getRTTicketDescription($){
   return unless $Transactions->Count > 0;
 
   my $Transaction = $Transactions->First;
+  $Transactions->GotoItem(0); # reset transactions index
 
   return $Transaction->Content;
 }
@@ -258,9 +320,37 @@ sub jellyCreateTicket($) {
   my $ownerUser = new RT::User($RT::SystemUser);
   $ownerUser->Load($ticket->Owner);
 
-  my $requestors = $ticket->Requestors->UserMembersObj;
-  my $firstrequestor = "";
-  $firstrequestor = $requestors->Next->Name unless ($requestors->Count < 1);
+  # Get the ticket description
+  my $ticketdesc=getRTTicketDescription($ticket);
+  my $requestors = $ticket->Requestors->UserMembersObj; # Returns a group object
+
+  # Determine a requestor to use
+  # Due to merging or other operations, multiple requestors can be assigned to a ticket.
+  # We'll only use one, based on the following priority
+  # * The first privileged user (or non-prived RT user that is mapped to a Jira user)
+  # * The first non-privileged user
+  my $firstreqname = $anonuser;
+  my $firstexternalemail;
+  while ( my $requestor = $requestors->Next ) {
+    # loop through to see if any of the requestors is a Jira user
+    if (isAnon($requestor)){
+      $firstexternalemail=$requestor->EmailAddress unless $firstexternalemail; # preserve the firstexternalmail
+      $firstreqname=$anonuser;
+    } else {
+      $firstreqname=mapUser($requestor);
+      $firstexternalemail="";
+      last;
+    }
+  }
+
+  # If we have a firstexternalmail, add a blurb to the description about it
+  # Otherwise, we'd just have a bunch of tickets assigned to $anonuser with no way to track it
+  if ($firstexternalemail) {
+    $ticketdesc="Requested by Non-Jira User: $firstexternalemail\n".$ticketdesc;
+  }
+
+  $ticketdesc=cleanXML($ticketdesc);
+  $ticketdesc=escapeJellyReservedChars($ticketdesc);
 
   # Create Issue
   $writer->startTag('jira:CreateIssue', 
@@ -268,25 +358,29 @@ sub jellyCreateTicket($) {
     issueKeyVar => 'key',
     summary => $ticket->Subject,
     priority => mapPriority($ticket->Priority),
-    reporter => mapUser($firstrequestor),
-    assignee => mapUser($ownerUser->Name),
-    description => escapeJellyReservedChars(cleanXML(getRTTicketDescription($ticket))),
+    reporter => $firstreqname,
+    assignee => mapUser($ownerUser),
+    description => $ticketdesc,
     created => fmtDateSQL2Jelly($ticket->Created),
     updated => fmtDateSQL2Jelly($ticket->LastUpdated),
   );
 
   # Insert RT3 Ticket Number Custom Field
   $writer->emptyTag('jira:AddCustomFieldValue',
-    name=>'RT3 Ticket Number', value=>$ticket->Id);
+    name=>$ticketfn, value=>$ticket->Id);
+  push @{$customfields{$ticketfn}},$ticket->Id;
 
   my $CustomFields = $ticket->CustomFields;
   while ( my $CustomField = $CustomFields->Next ) {
     my $Values = $ticket->CustomFieldValues( $CustomField->Id );
     my $count = $Values->Count;
+    my $fn=mapCF($CustomField->Name);
     #printf STDERR "Processing CustomField %s (%d values)\n", $CustomField->Name, $count;
     while ( my $Value = $Values->Next ) {
+      my $content=$Value->Content;
       $writer->emptyTag('jira:AddCustomFieldValue',
-        name=>mapCF($CustomField->Name), value=> $Value->Content);
+        name=>$fn, value=> $content);
+      push @{$customfields{$fn}}, $content unless grep (/^$content$/,@{$customfields{$fn}});
     }
   }
 
@@ -305,7 +399,7 @@ sub processTicketTransactions($) {
     $type=$Transaction->Type;
     #printf STDERR "Transaction %d has type \"%s\"\n", $Transaction->Id, $type;
 
-    if ( $type =~ /^(Create|Comment|Correspond)$/i ) {
+    if ( $type =~ /^(Comment|Correspond)$/i ) {
       # Process transaction as a comment
       Transaction2Comment($Transaction);
     }
@@ -313,8 +407,9 @@ sub processTicketTransactions($) {
       # Process transaction as a workflow transition
       Transaction2WorkflowTransition($Transaction);
     }
-    elsif ($type =~ /^(CommentEmailRecord|EmailRecord|AddWatcher|DelWatcher|Give|Take|Steal|Set|AddLink|DeleteLink|CustomField|Told|AddReminder|ResolveReminder|Told)$/i ) {
+    elsif ($type =~ /^(Create|CommentEmailRecord|EmailRecord|AddWatcher|DelWatcher|Give|Take|Steal|Set|AddLink|DeleteLink|CustomField|Told|AddReminder|ResolveReminder|Told)$/i ) {
       # transactions we know about that we can skip
+      # we skip Create transactions since the comment associated with Create is the Jira Issue description
     }
     else {
       # Skip unknown transaction types
@@ -383,7 +478,7 @@ sub Transaction2Comment($) {
 
   return 1 unless $Transaction->ContentObj; # Bail out if this has no content
 
-  my $transuser = &rt3jiramigrate::mapUser($Transaction->CreatorObj->Name);
+  my $transuser = mapUser($Transaction->CreatorObj);
   my $transcontent = $Transaction->Content;
   my $transdate = fmtDateSQL2Jelly($Transaction->Created);
 
@@ -391,6 +486,11 @@ sub Transaction2Comment($) {
   # text content, but there is a ContentObj associated with them.
   # Skip those transactions with the null string as content
   return 1 unless $transcontent;
+
+  if (isAnon($Transaction->CreatorObj)){
+    # pre-pend blurb to comment
+    $transcontent="Comment from Non-Jira User: $transuser\n".$transcontent;
+  }
   &jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
   return 0;
 }
@@ -400,7 +500,7 @@ sub Transaction2WorkflowTransition($) {
   my $Transaction = shift;
   my $oldstatus = $Transaction->OldValue;
   my $newstatus = $Transaction->NewValue;
-  my $user = mapUser($Transaction->CreatorObj->Name);
+  my $user = mapUser($Transaction->CreatorObj);
 
   if ( $oldstatus =~ /^(new|stalled)$/ ) {
     # Jira Issue should be in an "Open" state
@@ -544,3 +644,22 @@ finishJellyOutput();
 print STDERR "The following users should be created:\n\t";
 print STDERR join "\n\t", @users;
 print STDERR "\n";
+
+print STDERR "The following users are treated as Anonymous\n\t";
+print STDERR join "\n\t", @anonusers;
+print STDERR "\n";
+
+print STDERR "The following Custom Fields should be created:\n\t";
+print STDERR join "\n\t", keys %customfields;
+print STDERR "\n";
+
+print STDERR "\n------------\n";
+print STDERR "Unique values in the custom fields (for use with Multi Select Jira fields):";
+foreach my $fn (keys %customfields){
+  next if ($fn =~ /^RT3/);
+
+  print STDERR "Field $fn:";
+  print STDERR Dumper(@{$customfields{$fn}});
+
+  print "\n";
+}
