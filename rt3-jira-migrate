@@ -380,7 +380,7 @@ sub jellyCreateTicket($) {
       my $content=$Value->Content;
       $writer->emptyTag('jira:AddCustomFieldValue',
         name=>$fn, value=> $content);
-      push @{$customfields{$fn}}, $content unless grep (/^$content$/,@{$customfields{$fn}});
+      push @{$customfields{$fn}}, $content;
     }
   }
 
@@ -659,7 +659,7 @@ foreach my $fn (keys %customfields){
   next if ($fn =~ /^RT3/);
 
   print STDERR "Field $fn:";
-  print STDERR Dumper(@{$customfields{$fn}});
+  print STDERR Dumper( uniq( @{$customfields{$fn}} ) );
 
   print "\n";
 }
