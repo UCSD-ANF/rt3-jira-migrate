@@ -37,6 +37,9 @@ my $anonuser = "anon";
 
 # The Jira custom field used to track the RT ticket number
 my $ticketfn="RT3 Ticket Number";
+
+my $_issuekey="key"; # issue key, don't access directly
+
 #
 # Reporting variables
 #
@@ -357,7 +360,6 @@ sub processTicketObj($) {
   # Create Issue
   jellyStartCreateIssue(
     mapQueueToProject($ticket->QueueObj->Name),
-    'key',
     $ticket->Subject,
     mapPriority($ticket->Priority),
     $firstreqname,
@@ -464,9 +466,10 @@ sub processTicketTransactions($) {
 }
 
 sub jellyWkFlowStartProgress{
+  my $key=getIssueKey();
   my $user=shift;
   my @params=(
-    key => '${key}',
+    key => '${'.$key.'}',
     workflowAction => 'Start Progress',
   );
   push (@params, user=>$user) if $user;
@@ -475,9 +478,10 @@ sub jellyWkFlowStartProgress{
 }
 
 sub jellyWkFlowStopProgress{
+  my $key=getIssueKey();
   my $user=shift;
   my @params=(
-    key=>'${key}',
+    key=>'${'.$key.'}',
     workflowAction=> 'Stop Progress',
   );
   push (@params, user=>$user) if $user;
@@ -486,11 +490,12 @@ sub jellyWkFlowStopProgress{
 }
 
 sub jellyWkFlowCloseIssue{
+  my $key=getIssueKey();
   my $resolution=shift;
   my $user=shift;
   my @params=(
     workflowAction => 'Close Issue',
-    key => '${key}',
+    key => '${'.$key.'}',
   );
   push (@params, user => $user) if $user;
   push (@params, resolution => $resolution) if $resolution;
@@ -499,10 +504,11 @@ sub jellyWkFlowCloseIssue{
 }
 
 sub jellyWkFlowReopenIssue{
+  my $key=getIssueKey();
   my $user=shift;
 
   my @params=(
-    key=>'${key}',
+    key=>'${'.$key.'}',
     workflowAction=>'Reopen Issue',
   );
 
@@ -545,7 +551,7 @@ sub Transaction2Comment($) {
     # pre-pend blurb to comment
     $transcontent="Comment from Non-Jira User: $transuser\n".$transcontent;
   }
-  &jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
+  jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
   return 0;
 }
 
@@ -604,6 +610,16 @@ sub Transaction2WorkflowTransition($) {
   return 1;
 }
 
+# generate an issue key id to be used for per ticket transactions
+# Takes an RT::Ticket object as input
+sub getIssueKey() {
+  return $_issuekey;
+}
+
+sub setIssueKey($) {
+  $_issuekey=shift;
+}
+
 # Format a Date in SQL format in a Jira Jelly-ready format
 sub fmtDateSQL2Jelly ($) {
   my $sqldate=shift;    # input date in SQL date format
@@ -623,8 +639,8 @@ sub fmtDateSQL2Jelly ($) {
 
 # Output Jira Jelly to create a ticket.
 sub jellyStartCreateIssue{
+  my $issueKeyVar=getIssueKey();
   my $projkey=shift;
-  my $issueKeyVar=shift;
   my $summary=shift;
   my $priority=shift;
   my $reporter=shift;
@@ -654,23 +670,24 @@ sub jellyFinishCreateTicket(){
 # Output Jira Jelly Custom Field Value. This must be called within a jellyStartCreateIssue
 # and a jellyFinishCreateTicket block
 sub jellyAddCustomFieldValue ($$){
-  my $key=shift;
+  my $fieldname=shift;
   my $value=shift;
 
   $writer->emptyTag('jira:AddCustomFieldValue',
-    name=>$key, value=>$value);
-  $customfields{$key}->{$value}++;
+    name=>$fieldname, value=>$value);
+  $customfields{$fieldname}->{$value}++;
 
 }
 
 # Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
 sub jellyAddComment($$$){
+  my $key=getIssueKey();
   my $commenter = shift;
   my $date = shift;
   my $comment = shift;
 
   $writer->emptyTag('jira:AddComment',
-    'issue-key'=>'${key}',
+    'issue-key'=>'${'.$key.'}',
     commenter=>$commenter,
     created=>$date,
     updated=>$date,
@@ -680,6 +697,7 @@ sub jellyAddComment($$$){
 sub processTicket($) {
   my $ticket = shift;
   print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
+  setIssueKey("ik-".$ticket->Id);
 
   &processTicketObj($ticket);
 
