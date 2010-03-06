@@ -697,7 +697,7 @@ sub jellyAddComment($$$){
 sub processTicket($) {
   my $ticket = shift;
   print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
-  setIssueKey("ik-".$ticket->Id);
+  setIssueKey("rt".$ticket->Id);
 
   &processTicketObj($ticket);
 
