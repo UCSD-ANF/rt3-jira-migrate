@@ -43,9 +43,9 @@ my $ticketfn="RT3 Ticket Number";
 
 my @components; # List of components to create
 my @milestones; # List of milestones to create
-my @users; # List of users that should exist in Jira before import
-my @anonusers; # List of RT users that are treated as the anonymous user
-my %customfields; # LIst of customfields that should exist in Jira before import
+my %users; # List of users that should exist in Jira before import, key is username, value is count
+my %anonusers; # List of RT users that are treated as the anonymous user, key is username, value is count
+my %customfields; # List of customfields that should exist in Jira before import
 
 my $writer; # XML-Writer instance for Jelly file
 my $output; # Output IO handle for XML-Writer
@@ -69,7 +69,8 @@ my %usermap = (
   'rnitz@comm-systems.com' => 'rnitz',
   'jkim@sciences.sdsu.edu' => 'jkim',
   'vernon@brtt.com' => 'vernon',
-  'davidechavez@gmail.com' => 'chavez',
+  'davidechavez@gmail.com' => 'dechavez',
+  'dchavez@ucsd.edu' => 'dechavez',
   'jbytof@ucsd.edu' => 'bytof',
   'thim22@gmail.com' => 'thim',
   'dcconstant@ucsd.edu' => 'delia',
@@ -83,6 +84,7 @@ my %usermap = (
   'tshansen@nlanr.net' => 'tshansen',
   'tshansen@ucsd.edu' => 'tshansen',
   'kent' => 'lindquist',
+  'clemesha@gmail.com' => 'aclemesh',
 );
 
 # Function to map RT users to Jira users
@@ -119,12 +121,12 @@ sub mapUser($) {
     else {
       # We have an anonymous user. Log it.
       $jirauser=$anonuser;
-      push (@anonusers,$name) unless grep (/^$name$/,@anonusers);
+      $anonusers{$name}++;
     }
 
   }
   # Log the user mapping and return
-  push (@users,$jirauser) unless grep (/^$jirauser$/,@users);
+  $users{$jirauser}++;
   return $jirauser;
 }
 
@@ -146,7 +148,7 @@ sub isAnon($){
   } 
 
   # User is anonymous
-  push (@anonusers, $name) unless grep (/^$name$/,@anonusers);
+  # don't log, we'll let mapUser do the logging in anonusers
   return 1;
 }
 
@@ -315,7 +317,7 @@ sub getRTTicketDescription($){
   return $Transaction->Content;
 }
 
-sub jellyCreateTicket($) {
+sub processTicketObj($) {
   my $ticket = shift;
   my $ownerUser = new RT::User($RT::SystemUser);
   $ownerUser->Load($ticket->Owner);
@@ -353,22 +355,20 @@ sub jellyCreateTicket($) {
   $ticketdesc=escapeJellyReservedChars($ticketdesc);
 
   # Create Issue
-  $writer->startTag('jira:CreateIssue', 
-    'project-key' => mapQueueToProject($ticket->QueueObj->Name),
-    issueKeyVar => 'key',
-    summary => $ticket->Subject,
-    priority => mapPriority($ticket->Priority),
-    reporter => $firstreqname,
-    assignee => mapUser($ownerUser),
-    description => $ticketdesc,
-    created => fmtDateSQL2Jelly($ticket->Created),
-    updated => fmtDateSQL2Jelly($ticket->LastUpdated),
+  jellyStartCreateIssue(
+    mapQueueToProject($ticket->QueueObj->Name),
+    'key',
+    $ticket->Subject,
+    mapPriority($ticket->Priority),
+    $firstreqname,
+    mapUser($ownerUser),
+    $ticketdesc,
+    fmtDateSQL2Jelly($ticket->Created),
+    fmtDateSQL2Jelly($ticket->LastUpdated),
   );
 
   # Insert RT3 Ticket Number Custom Field
-  $writer->emptyTag('jira:AddCustomFieldValue',
-    name=>$ticketfn, value=>$ticket->Id);
-  push @{$customfields{$ticketfn}},$ticket->Id;
+  jellyAddCustomFieldValue($ticketfn, $ticket->Id);
 
   my $CustomFields = $ticket->CustomFields;
   while ( my $CustomField = $CustomFields->Next ) {
@@ -377,15 +377,12 @@ sub jellyCreateTicket($) {
     my $fn=mapCF($CustomField->Name);
     #printf STDERR "Processing CustomField %s (%d values)\n", $CustomField->Name, $count;
     while ( my $Value = $Values->Next ) {
-      my $content=$Value->Content;
-      $writer->emptyTag('jira:AddCustomFieldValue',
-        name=>$fn, value=> $content);
-      push @{$customfields{$fn}}, $content;
+      jellyAddCustomFieldValue($fn, $Value->Content);
     }
   }
 
   # End Issue
-  $writer->endTag('jira:CreateIssue');
+  jellyFinishCreateTicket();
 }
 
 # foreach comment: generate jelly script to add a comment to existing ticket
@@ -393,10 +390,19 @@ sub processTicketTransactions($) {
   my $Ticket=shift;     # input RT::Ticket object
   my $Transactions = $Ticket->Transactions; # Transactions from the current ticket
   my $type;             # transaction type
+  my %transtypectr;     # Keep count of each transaction type we encounter per ticket
 
+  # RT tickets can be in any state, open or closed. Jira jelly creates tickets in the "Open" state which is equivalent to the "new" state in RT.
+  # The transaction record may or may not record the creation of the ticket, but we need to make sure that we don't try to do a re-open on a Jira "open" or "In Progress" ticket.
+  # Additionally, the create transaction record doesn't track the initial state of the ticket, making it tough to get a full history
+  # Jira Jelly won't let us set the creation date of a workflow transition either, so all that matters is to record the final state of the RT ticket.
+
+  my $finalstatus=$Ticket->Status;
+  my $reopenctr=0;      # track if the ticket has been reopened
   while (my $Transaction = $Transactions->Next) {
 
     $type=$Transaction->Type;
+    $transtypectr{$type}++;
     #printf STDERR "Transaction %d has type \"%s\"\n", $Transaction->Id, $type;
 
     if ( $type =~ /^(Comment|Correspond)$/i ) {
@@ -404,8 +410,17 @@ sub processTicketTransactions($) {
       Transaction2Comment($Transaction);
     }
     elsif ( ($type =~ /Status/) && ($Transaction->Field eq 'Status') ) {
+      # Track re-opens
+      my $oldstatus=$Transaction->OldValue;
+      my $newstatus=$Transaction->NewValue;
+      if ( ( $oldstatus =~ /^(rejected|resolved|deleted)$/) &&
+        ($newstatus =~ /^(new|open|stalled)$/ ) 
+      ) {
+        $reopenctr++;
+      }
+
       # Process transaction as a workflow transition
-      Transaction2WorkflowTransition($Transaction);
+      # Transaction2WorkflowTransition($Transaction, $transtypectr{$type});
     }
     elsif ($type =~ /^(Create|CommentEmailRecord|EmailRecord|AddWatcher|DelWatcher|Give|Take|Steal|Set|AddLink|DeleteLink|CustomField|Told|AddReminder|ResolveReminder|Told)$/i ) {
       # transactions we know about that we can skip
@@ -416,45 +431,74 @@ sub processTicketTransactions($) {
       printf STDERR "Skipping unknown RT transaction type %s in transaction %d\n", $type, $Transaction->Id;
     }
   }
+
+  # Finally, set the status of the Jira issue based on it's current state and whether it's been reopened or not
+  # if we're in an open state and reopenctr > 0
+  #   generate a close and then a reopen
+  # else just generate a transaction based on the final state
+  # Since we don't know who to blame, we're not going to track whether or not the ticket is in proress or not, just open or closed.
+
+  if ( $finalstatus =~ /^(new|stalled|open)$/ ){
+    if ($reopenctr) {
+      # TODO: We don't track whether previous close was a fixed or won't fix situation
+      jellyWkFlowCloseIssue("Fixed");
+      jellyWkFlowReopenIssue();
+    }
+    # else - since jira issues created in jelly are already in an open state, we'll do nothing
+  } elsif ( $finalstatus =~ /^(rejected|resolved|deleted)$/ ) {
+    jellyWkFlowCloseIssue(mapResolution($finalstatus));
+  }
+  else {
+    die(sprintf("Unknown final status %s encountered on Ticket %d",$finalstatus,$Ticket->Id));
+  }
 }
 
-sub jellyWkFlowStartProgress($){
+sub jellyWkFlowStartProgress{
   my $user=shift;
-  $writer->emptyTag('jira:TransitionWorkflow',
+  my @params=(
     key => '${key}',
-    user => $user,
     workflowAction => 'Start Progress',
   );
+  push (@params, user=>$user) if $user;
+
+  $writer->emptyTag('jira:TransitionWorkflow',@params);
 }
 
-sub jellyWkFlowStopProgress($){
+sub jellyWkFlowStopProgress{
   my $user=shift;
-  $writer->emptyTag('jira:TransitionWorkflow',
-    key => '${key}',
-    user => $user,
-    workflowAction => 'Stop Progress',
+  my @params=(
+    key=>'${key}',
+    workflowAction=> 'Stop Progress',
   );
+  push (@params, user=>$user) if $user;
+
+  $writer->emptyTag('jira:TransitionWorkflow', @params);
 }
 
-sub jellyWkFlowCloseIssue($$){
-  my $user=shift;
+sub jellyWkFlowCloseIssue{
   my $resolution=shift;
-
-  $writer->emptyTag('jira:TransitionWorkflow',
-    key => '${key}',
-    user => $user,
+  my $user=shift;
+  my @params=(
     workflowAction => 'Close Issue',
-    resolution => $resolution,
+    key => '${key}',
   );
+  push (@params, user => $user) if $user;
+  push (@params, resolution => $resolution) if $resolution;
+
+  $writer->emptyTag('jira:TransitionWorkflow', @params);
 }
 
-sub jellyWkFlowReopenIssue($){
+sub jellyWkFlowReopenIssue{
   my $user=shift;
-  $writer->emptyTag('jira:TransitionWorkflow',
-    key => '${key}',
-    user => $user,
-    workflowAction => 'Reopen Issue',
+
+  my @params=(
+    key=>'${key}',
+    workflowAction=>'Reopen Issue',
   );
+
+  push (@params, 'user'=>$user) if $user;
+
+  $writer->emptyTag('jira:TransitionWorkflow', @params);
 }
 
 # RT states to Jira resolutions
@@ -512,7 +556,7 @@ sub Transaction2WorkflowTransition($) {
       return 1;
     }
     elsif ( $newstatus =~ /^(rejected|deleted|resolved)$/ ) {
-      jellyWkFlowCloseIssue($user,&mapResolution($newstatus));
+      jellyWkFlowCloseIssue(&mapResolution($newstatus), $user);
       return 1;
     }
   } 
@@ -523,7 +567,7 @@ sub Transaction2WorkflowTransition($) {
       return 1;
     }
     elsif ( $newstatus =~ /^(rejected|deleted|resolved)$/ ) {
-      jellyWkFlowCloseIssue($user,mapResolution($newstatus));
+      jellyWkFlowCloseIssue(mapResolution($newstatus), $user);
       return 1;
     }
   }
@@ -567,6 +611,48 @@ sub fmtDateSQL2Jelly ($) {
   return $result;
 }
 
+# Output Jira Jelly to create a ticket.
+sub jellyStartCreateIssue{
+  my $projkey=shift;
+  my $issueKeyVar=shift;
+  my $summary=shift;
+  my $priority=shift;
+  my $reporter=shift;
+  my $assignee=shift;
+  my $description=shift;
+  my $created=shift;
+  my $updated=shift;
+
+  $writer->startTag('jira:CreateIssue', 
+    'project-key' => $projkey,
+    issueKeyVar => $issueKeyVar,
+    summary => $summary,
+    priority => $priority,
+    reporter => $reporter,
+    assignee => $assignee,
+    description => $description,
+    created => $created,
+    updated => $updated,
+  );
+}
+
+# Output Jira Jelly to close a create ticket block.
+sub jellyFinishCreateTicket(){
+  $writer->endTag('jira:CreateIssue');
+}
+
+# Output Jira Jelly Custom Field Value. This must be called within a jellyStartCreateIssue
+# and a jellyFinishCreateTicket block
+sub jellyAddCustomFieldValue ($$){
+  my $key=shift;
+  my $value=shift;
+
+  $writer->emptyTag('jira:AddCustomFieldValue',
+    name=>$key, value=>$value);
+  $customfields{$key}->{$value}++;
+
+}
+
 # Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
 sub jellyAddComment($$$){
   my $commenter = shift;
@@ -585,7 +671,7 @@ sub processTicket($) {
   my $ticket = shift;
   print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
 
-  &jellyCreateTicket($ticket);
+  &processTicketObj($ticket);
 
   &rt3jiramigrate::processTicketTransactions($ticket);
 }
@@ -642,11 +728,11 @@ while (my $ticket = $tickets->Next) {
 finishJellyOutput();
 
 print STDERR "The following users should be created:\n\t";
-print STDERR join "\n\t", @users;
+print STDERR join "\n\t", keys %users;
 print STDERR "\n";
 
 print STDERR "The following users are treated as Anonymous\n\t";
-print STDERR join "\n\t", @anonusers;
+print STDERR join "\n\t", keys %anonusers;
 print STDERR "\n";
 
 print STDERR "The following Custom Fields should be created:\n\t";
@@ -659,7 +745,7 @@ foreach my $fn (keys %customfields){
   next if ($fn =~ /^RT3/);
 
   print STDERR "Field $fn:";
-  print STDERR Dumper( uniq( @{$customfields{$fn}} ) );
+  print STDERR Dumper( $customfields{$fn} );
 
   print "\n";
 }
