@@ -399,6 +399,8 @@ sub processTicketTransactions($) {
 
   my $finalstatus=$Ticket->Status;
   my $reopenctr=0;      # track if the ticket has been reopened
+  my $laststatususer;   # track who the last user to do a status change on a ticket is
+  my $lastcloseduser;   # track who last closed the ticket
   while (my $Transaction = $Transactions->Next) {
 
     $type=$Transaction->Type;
@@ -410,9 +412,17 @@ sub processTicketTransactions($) {
       Transaction2Comment($Transaction);
     }
     elsif ( ($type =~ /Status/) && ($Transaction->Field eq 'Status') ) {
-      # Track re-opens
+      $laststatususer=mapUser($Transaction->CreatorObj);
+
       my $oldstatus=$Transaction->OldValue;
       my $newstatus=$Transaction->NewValue;
+
+      # track the last user to close a ticket is
+      if ($newstatus =~ /^(rejected|resolved|deleted)$/) {
+        $lastcloseduser=mapUser($Transaction->CreatorObj);
+      }
+
+      # Track re-opens
       if ( ( $oldstatus =~ /^(rejected|resolved|deleted)$/) &&
         ($newstatus =~ /^(new|open|stalled)$/ ) 
       ) {
@@ -436,17 +446,17 @@ sub processTicketTransactions($) {
   # if we're in an open state and reopenctr > 0
   #   generate a close and then a reopen
   # else just generate a transaction based on the final state
-  # Since we don't know who to blame, we're not going to track whether or not the ticket is in proress or not, just open or closed.
+  # Since we don't know who to blame for each commit, we're not going to track whether or not the ticket is in proress or not, just open or closed.
 
   if ( $finalstatus =~ /^(new|stalled|open)$/ ){
     if ($reopenctr) {
       # TODO: We don't track whether previous close was a fixed or won't fix situation
-      jellyWkFlowCloseIssue("Fixed");
-      jellyWkFlowReopenIssue();
+      jellyWkFlowCloseIssue("Fixed",$lastcloseduser);
+      jellyWkFlowReopenIssue($laststatususer);
     }
     # else - since jira issues created in jelly are already in an open state, we'll do nothing
   } elsif ( $finalstatus =~ /^(rejected|resolved|deleted)$/ ) {
-    jellyWkFlowCloseIssue(mapResolution($finalstatus));
+    jellyWkFlowCloseIssue(mapResolution($finalstatus,$laststatususer));
   }
   else {
     die(sprintf("Unknown final status %s encountered on Ticket %d",$finalstatus,$Ticket->Id));
