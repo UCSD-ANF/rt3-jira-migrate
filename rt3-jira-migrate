@@ -538,7 +538,8 @@ sub Transaction2Comment($) {
 
   return 1 unless $Transaction->ContentObj; # Bail out if this has no content
 
-  my $transuser = mapUser($Transaction->CreatorObj);
+  my $creatorobj = $Transaction->CreatorObj;
+  my $transuser = mapUser($creatorobj);
   my $transcontent = $Transaction->Content;
   my $transdate = fmtDateSQL2Jelly($Transaction->Created);
 
@@ -547,9 +548,12 @@ sub Transaction2Comment($) {
   # Skip those transactions with the null string as content
   return 1 unless $transcontent;
 
-  if (isAnon($Transaction->CreatorObj)){
+  if (isAnon($creatorobj)){
+    # extract original user info
+    my $origuser=$creatorobj->Name;
+    my $origemail=$creatorobj->EmailAddress;
     # pre-pend blurb to comment
-    $transcontent="Comment from Non-Jira User: $transuser\n".$transcontent;
+    $transcontent="Comment from Non-Jira User: $origuser <$origemail>\n".$transcontent;
   }
   jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
   return 0;
