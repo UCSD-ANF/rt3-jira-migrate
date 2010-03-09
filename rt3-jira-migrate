@@ -365,7 +365,7 @@ sub startJellyOutput ($) {
   $writer->xmlDecl();
 
 # Start Writing Jelly
-  $writer->startTag('JiraJelly', 'xmlns:jira' => 'jelly:com.atlassian.jira.jelly.JiraTagLib');
+  $writer->startTag('JiraJelly', 'xmlns:jira' => 'jelly:com.atlassian.jira.jelly.enterprise.JiraTagLib');
 
   return;
 }
