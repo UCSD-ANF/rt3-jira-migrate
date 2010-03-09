@@ -816,7 +816,7 @@ while (my $ticket = $tickets->Next) {
 
     # Start a new file
     # get ready to write Jelly
-    my $filename = sprintf("%s%d_of_%d%s",
+    my $filename = sprintf("%s%2d_of_%d%s",
       $outfnprefix,
       $curfileidx,
       $numfiles,
