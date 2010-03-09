@@ -30,13 +30,13 @@ use POSIX;
 # output files.
 my $outfnprefix="rt3-jira-migrate-"; # output file prefix
 my $outfnsuffix=".jelly"; # output file suffix
-my $numtixperfile=100; # Maximum number of tickets per file
+my $numtixperfile=25; # Maximum number of tickets per file
 
 # The username to use as the reporter when an RT transaction is from a non-JIRA user
 my $anonuser = "anon";
 
 # The Jira custom field used to track the RT ticket number
-my $ticketfn="RT3 Ticket Number";
+my $rttktidfn="RT3 Ticket Number";
 
 my $_issuekey="key"; # issue key, don't access directly
 
@@ -256,18 +256,90 @@ sub mapQueueToProject($){
 }
 
 my %cfmap = (
-  "Documentation Link" => "RT3 Documentation Link",
-  "Vendor Ticket #" => "Vendor Ticket Id",
-  "Sat Station" => "Satellite Station",
+  "Documentation Link" => { 
+    jiraname => "Documentation Link", 
+    procfunc => \&multiurl2textfield,
+  },
+  "Vendor Ticket #" => {
+    jiraname => "Vendor Ticket Id",
+  },
+  "Sat Station" => {
+    jiraname => "Satellite Station",
+  },
+  Server => {
+    jiraname => "Hosts Affected",
+  },
+  "-default-" => {
+    procfunc => \&multitext2textfield,
+  }
 );
 
+# Combine all values in @$values_ref, and generate jelly tag only if there are values
+sub multitext2textfield($$){
+  my $fieldname = shift;
+  my $values_ref = shift;
+
+  jellyAddCustomFieldValue($fieldname, join ("\n", @$values_ref)) if scalar @$values_ref;
+}
+
+# combine multiple URL entries from an RT CustomField into a single Jira CustomField
+sub multiurl2textfield($$){
+  my $fieldname = shift; # The Jira Name of the Custom Field
+  my $values_ref = shift; # A reference to an array containing values
+  my @cleanvals; # array to hold the URLS stripped of their surrounding wikitext markup
+  my $finalval; # the value that actually gets put into the Jira Custom Field
+
+  # Don't do anything unless we have values to process
+  return unless (scalar @$values_ref > 0) ;
+
+  # Strip off wikitext square braces around URLs
+  foreach my $val (@$values_ref) {
+    $val =~ s/^\[(.*)\]$/$1/;
+    push @cleanvals, $val;
+  }
+
+  $finalval = join ("\n", @cleanvals);
+  jellyAddCustomFieldValue($fieldname, $finalval);
+}
+
 # Map RT Custom Fields to Jira Custom Fields
-sub mapCF ($) {
+sub mapCFNames ($) {
   my $field=shift;
 
-  $field=$cfmap{$field} if (exists $cfmap{$field});
+  $field=$cfmap{$field}{'jiraname'} if (exists $cfmap{$field}{'jiraname'});
 
   return $field;
+}
+
+# Map RT Custom Fields to a processing function
+# returns a reference to a function
+sub mapCFProc ($) {
+  my $field=shift;
+
+  if (exists $cfmap{$field}{'procfunc'}) {
+    return $cfmap{$field}{'procfunc'};
+  }
+  return $cfmap{'-default-'}{'procfunc'};
+}
+
+sub processTicketCustomFields($){
+  my $Ticket=shift;
+
+  my $CustomFields = $Ticket->CustomFields;
+  while ( my $CustomField = $CustomFields->Next ) {
+    my $fn=mapCFNames($CustomField->Name);
+
+    my $CFVals=$Ticket->CustomFieldValues( $CustomField->Id);
+
+    # skip field if there aren't any values to process
+    next unless ($CFVals->Count > 0);
+
+    my $cfval_ref=$CFVals->ItemsArrayRef;
+
+    # Extract the content of the custom field values and put it into an array
+    my @vals = map { $_->Content } @$cfval_ref;
+    &mapCFProc($fn)->($fn,\@vals);
+  }
 }
 
 # Initilize RT
@@ -370,18 +442,19 @@ sub processTicketObj($) {
   );
 
   # Insert RT3 Ticket Number Custom Field
-  jellyAddCustomFieldValue($ticketfn, $ticket->Id);
+  jellyAddCustomFieldValue($rttktidfn, $ticket->Id);
 
-  my $CustomFields = $ticket->CustomFields;
-  while ( my $CustomField = $CustomFields->Next ) {
-    my $Values = $ticket->CustomFieldValues( $CustomField->Id );
-    my $count = $Values->Count;
-    my $fn=mapCF($CustomField->Name);
-    #printf STDERR "Processing CustomField %s (%d values)\n", $CustomField->Name, $count;
-    while ( my $Value = $Values->Next ) {
-      jellyAddCustomFieldValue($fn, $Value->Content);
-    }
-  }
+  #my $CustomFields = $ticket->CustomFields;
+  #while ( my $CustomField = $CustomFields->Next ) {
+  #  my $Values = $ticket->CustomFieldValues( $CustomField->Id );
+  #  my $count = $Values->Count;
+  #  my $fn=mapCFNames($CustomField->Name);
+  #  #printf STDERR "Processing CustomField %s (%d values)\n", $CustomField->Name, $count;
+  #  while ( my $Value = $Values->Next ) {
+  #    jellyAddCustomFieldValue($fn, $Value->Content);
+  #  }
+  #}
+  processTicketCustomFields($ticket);
 
   # End Issue
   jellyFinishCreateTicket();
@@ -458,7 +531,7 @@ sub processTicketTransactions($) {
     }
     # else - since jira issues created in jelly are already in an open state, we'll do nothing
   } elsif ( $finalstatus =~ /^(rejected|resolved|deleted)$/ ) {
-    jellyWkFlowCloseIssue(mapResolution($finalstatus,$laststatususer));
+    jellyWkFlowCloseIssue(mapResolution($finalstatus),$laststatususer);
   }
   else {
     die(sprintf("Unknown final status %s encountered on Ticket %d",$finalstatus,$Ticket->Id));
