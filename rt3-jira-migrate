@@ -30,7 +30,7 @@ use POSIX;
 # output files.
 my $outfnprefix="rt3-jira-migrate-"; # output file prefix
 my $outfnsuffix=".jelly"; # output file suffix
-my $numtixperfile=25; # Maximum number of tickets per file
+my $numtixperfile=10; # Maximum number of tickets per file
 
 # The username to use as the reporter when an RT transaction is from a non-JIRA user
 my $anonuser = "anon";
@@ -365,7 +365,7 @@ sub startJellyOutput ($) {
   $writer->xmlDecl();
 
 # Start Writing Jelly
-  $writer->startTag('JiraJelly', 'xmlns:jira' => 'jelly:com.atlassian.jira.jelly.enterprise.JiraTagLib');
+  $writer->startTag('JiraJelly', 'xmlns:jira' => 'jelly:com.atlassian.jira.jelly.JiraTagLib');
 
   return;
 }
