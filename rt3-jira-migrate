@@ -269,6 +269,7 @@ my %cfmap = (
   },
   "Sat Station" => {
     jiraname => "Satellite Station",
+    procfunc => \&multitext2multiselect,
   },
   Server => {
     jiraname => "Hosts Affected",
@@ -311,6 +312,15 @@ sub multiurl2textfield($$){
 
   $finalval = join ("\n", @cleanvals);
   jellyAddCustomFieldValue($fieldname, $finalval);
+}
+
+sub multitext2multiselect($$){
+  my $jirafieldname = shift;
+  my $values_ref = shift;
+
+  foreach my $val (@$values_ref) {
+    jellyAddCustomFieldValue($jirafieldname, $val);
+  }
 }
 
 # Map RT Custom Field Names to Jira Custom Field Names
