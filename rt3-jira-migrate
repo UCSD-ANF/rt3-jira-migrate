@@ -348,7 +348,8 @@ sub processTicketCustomFields($){
 
   my $CustomFields = $Ticket->CustomFields;
   while ( my $CustomField = $CustomFields->Next ) {
-    my $fn=mapCFNames($CustomField->Name);
+    my $rtfn=$CustomField->Name;
+    my $jirafn=mapCFNames($rtfn);
 
     my $CFVals=$Ticket->CustomFieldValues( $CustomField->Id);
 
@@ -359,7 +360,7 @@ sub processTicketCustomFields($){
 
     # Extract the content of the custom field values and put it into an array
     my @vals = map { $_->Content } @$cfval_ref;
-    &mapCFProc($fn)->($fn,\@vals);
+    &mapCFProc($rtfn)->($jirafn,\@vals);
   }
 }
 
