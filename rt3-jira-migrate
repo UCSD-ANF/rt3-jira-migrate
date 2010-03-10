@@ -255,6 +255,10 @@ sub mapQueueToProject($){
   return $queue;
 }
 
+# Map of RT Custom Field names to their Jira names, and a processing function to handle multple values for a field.
+# defaults are specifed in the "-default-" record
+#
+# If no jiraname is specified, it defaults to the RT Field Name
 my %cfmap = (
   "Documentation Link" => { 
     jiraname => "Documentation Link", 
@@ -274,12 +278,15 @@ my %cfmap = (
   }
 );
 
-# Combine all values in @$values_ref, and generate jelly tag only if there are values
+# Combine multiple values in an RT Multiple Value text field into a single text field, and generate jelly tag only if there are values
+# Params:
+#  The Jira Field Name
+#  A reference to an array containing the RT field values
 sub multitext2textfield($$){
-  my $fieldname = shift;
+  my $jirafieldname = shift;
   my $values_ref = shift;
 
-  jellyAddCustomFieldValue($fieldname, join ("\n", @$values_ref)) if scalar @$values_ref;
+  jellyAddCustomFieldValue($jirafieldname, join ("\n", @$values_ref)) if scalar @$values_ref;
 }
 
 # combine multiple URL entries from an RT CustomField into a single Jira CustomField
@@ -293,16 +300,20 @@ sub multiurl2textfield($$){
   return unless (scalar @$values_ref > 0) ;
 
   # Strip off wikitext square braces around URLs
+  # There may be multiple lines in the wikitext area so split that up
   foreach my $val (@$values_ref) {
-    $val =~ s/^\[(.*)\]$/$1/;
-    push @cleanvals, $val;
+    my @linevals=split (/\n/, $val);
+    foreach my $lineval (@linevals) {
+      $lineval =~ s/^\[(.*)\]$/$1/;
+      push @cleanvals, $lineval;
+    }
   }
 
   $finalval = join ("\n", @cleanvals);
   jellyAddCustomFieldValue($fieldname, $finalval);
 }
 
-# Map RT Custom Fields to Jira Custom Fields
+# Map RT Custom Field Names to Jira Custom Field Names
 sub mapCFNames ($) {
   my $field=shift;
 
