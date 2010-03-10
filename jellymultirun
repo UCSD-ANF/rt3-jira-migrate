@@ -1,0 +1,77 @@
+#!/opt/csw/bin/perl
+
+use warnings;
+use strict;
+
+use HTTP::Async;
+use HTTP::Request;
+use Term::ReadKey;
+use DirHandle;
+use URI::Escape;
+
+my $JIRABASEURL="https://anfweb-dev.ucsd.edu/jira/";
+my $JIRAUSER="davis";
+my $JIRAPASS;
+my $JELLYDIR="/home/davis/src/IGPP/rt3-jira-migrate";
+
+my $CONCURREQ=4; # number of concurrent requests
+
+# MAIN
+
+$JIRAPASS=getJiraPasswd();
+my @jellyfiles=getjellyfilenames($JELLYDIR);
+my $async=HTTP::Async->new( slots => $CONCURREQ );
+
+# Add files to the async requestor
+foreach my $fn (@jellyfiles) {
+  my $url=$JIRABASEURL .  "secure/admin/util/JellyRunner.jspa?os_username=" . $JIRAUSER . "&os_password=" . $JIRAPASS . "&filename=" . $fn . "&script=&Run+now=Run+now";
+  #$url=uri_escape($url);
+  print $url."\n";
+  my $uri = URI->new( $url, "https" );
+  $async->add( HTTP::Request->new( GET => $uri) );
+  print STDERR "debug: added request for file $fn\n";
+}
+
+# Process the responses as they come back:
+while ( my $response = $async->wait_for_next_response ) {
+  my $urlfn = $response->filename;
+  my $jellyfn;
+  if ( $urlfn =~ /filename=(.*?)&/ ) {
+    $jellyfn = $1;
+  }
+  else {$jellyfn=$urlfn;}
+
+  if ($response->is_success) {
+    print "Received success response back for file $jellyfn\n";
+
+    print $response->decoded_content();
+  }
+  else {
+    print "ERROR: request for $jellyfn failed\n";
+  }
+}
+
+#######################
+
+# Get password
+sub getJiraPasswd {
+  my $password;
+  print "Please enter password for user $JIRAUSER at $JIRABASEURL\n> ";
+  ReadMode('noecho');
+  $password = ReadLine(0);
+  chomp $password;
+  ReadMode('restore');
+  print "\n";
+  return $password;
+}
+
+# get list of all filenames in JELLYDIR ending in .jelly, sorted
+sub getjellyfilenames {
+  my $dir=shift;
+  my $dh=DirHandle->new($dir) or die "can't opendir $dir: $!";
+  return sort           # sort pathnames
+  grep { -f }           # choose only "plain" files
+  map { "$dir/$_" }     # Create full paths
+  grep { /\.jelly$/ }   # choose only files ending in ".jelly"
+  $dh->read();          # read all entries
+}
