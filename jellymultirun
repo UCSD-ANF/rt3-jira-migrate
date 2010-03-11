@@ -13,7 +13,7 @@ use URI;
 my $JIRABASEURL="https://anfweb-dev.ucsd.edu/jira/";
 my $JIRAUSER="davis";
 my $JIRAPASS;
-my $JELLYDIR="/home/davis/src/IGPP/rt3-jira-migrate";
+my $JELLYDIR="/home/davis/src/IGPP/rt3-jira-migrate/data";
 
 my $CONCURREQ=4; # number of concurrent requests
 
