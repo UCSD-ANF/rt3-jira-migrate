@@ -28,9 +28,10 @@ use POSIX;
 # Because the Jelly parser is a huge memory hog, it can't handle all 1700+
 # tickets at once. The following variables control the automatic splitting of
 # output files.
+my $outdir="/home/davis/src/IGPP/rt3-jira-migrate/data";
 my $outfnprefix="rt3-jira-migrate-"; # output file prefix
 my $outfnsuffix=".jelly"; # output file suffix
-my $numtixperfile=10; # Maximum number of tickets per file
+my $numtixperfile=1; # Maximum number of tickets per file
 
 # The username to use as the reporter when an RT transaction is from a non-JIRA user
 my $anonuser = "anon";
@@ -49,6 +50,7 @@ my @milestones; # List of milestones to create
 my %users; # List of users that should exist in Jira before import, key is username, value is count
 my %anonusers; # List of RT users that are treated as the anonymous user, key is username, value is count
 my %customfields; # List of customfields that should exist in Jira before import
+my %summaries; # List of summaries - Duplicate summary detection
 
 my $writer; # XML-Writer instance for Jelly file
 my $output; # Output IO handle for XML-Writer
@@ -749,7 +751,7 @@ sub jellyStartCreateIssue{
   my $created=shift;
   my $updated=shift;
 
-  $writer->startTag('jira:CreateIssue', 
+  my @writerargs = (
     'project-key' => $projkey,
     issueKeyVar => $issueKeyVar,
     summary => $summary,
@@ -760,6 +762,17 @@ sub jellyStartCreateIssue{
     created => $created,
     updated => $updated,
   );
+
+  # If we've seen this summary before, tell Jira Jelly to ignore this duplicate summary
+  # http://confluence.atlassian.com/display/JIRAKB/Not+able+to+create+an+issue+with+the+same+summary+using+Jelly+Script
+  if ($summaries{$summary}) {
+    push @writerargs, duplicateSummary => "ignore";
+  }
+
+  $writer->startTag('jira:CreateIssue', @writerargs);
+
+  # Increment the summary counter for this unique summary
+  $summaries{$summary}++;
 }
 
 # Output Jira Jelly to close a create ticket block.
@@ -839,7 +852,8 @@ while (my $ticket = $tickets->Next) {
 
     # Start a new file
     # get ready to write Jelly
-    my $filename = sprintf("%s%03d_of_%d%s",
+    my $filename = sprintf("%s/%s%03d_of_%d%s",
+      $outdir,
       $outfnprefix,
       $curfileidx,
       $numfiles,
