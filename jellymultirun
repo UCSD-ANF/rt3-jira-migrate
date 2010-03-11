@@ -3,11 +3,11 @@
 use warnings;
 use strict;
 
-use HTTP::Async;
+#use HTTP::Async;
+use LWP::UserAgent;
 use HTTP::Request;
 use Term::ReadKey;
 use DirHandle;
-use URI::Escape;
 
 my $JIRABASEURL="https://anfweb-dev.ucsd.edu/jira/";
 my $JIRAUSER="davis";
@@ -15,41 +15,43 @@ my $JIRAPASS;
 my $JELLYDIR="/home/davis/src/IGPP/rt3-jira-migrate";
 
 my $CONCURREQ=4; # number of concurrent requests
+my $successstr="Jelly script completed successfully";
 
 # MAIN
 
 $JIRAPASS=getJiraPasswd();
 my @jellyfiles=getjellyfilenames($JELLYDIR);
-my $async=HTTP::Async->new( slots => $CONCURREQ );
+my $ua=LWP::UserAgent->new();
+my $response;
 
-# Add files to the async requestor
+# run each request
 foreach my $fn (@jellyfiles) {
-  my $url=$JIRABASEURL .  "secure/admin/util/JellyRunner.jspa?os_username=" . $JIRAUSER . "&os_password=" . $JIRAPASS . "&filename=" . $fn . "&script=&Run+now=Run+now";
-  #$url=uri_escape($url);
-  print $url."\n";
-  my $uri = URI->new( $url, "https" );
-  $async->add( HTTP::Request->new( GET => $uri) );
-  print STDERR "debug: added request for file $fn\n";
-}
-
-# Process the responses as they come back:
-while ( my $response = $async->wait_for_next_response ) {
-  my $urlfn = $response->filename;
-  my $jellyfn;
-  if ( $urlfn =~ /filename=(.*?)&/ ) {
-    $jellyfn = $1;
-  }
-  else {$jellyfn=$urlfn;}
-
+   my $url=$JIRABASEURL .  "secure/admin/util/JellyRunner.jspa?os_username=" . $JIRAUSER . "&os_password=" . $JIRAPASS . "&filename=" . $fn . "&script=&Run+now=Run+now";
+  my @fields=(
+    os_username => $JIRAUSER,
+    os_password => $JIRAPASS,
+    filename => $fn,
+    script => '',
+    'Run+now' => 'Run+now'
+  );
+  print STDERR "-------Requesting jelly processing for file $fn\n";
+  #$response=$ua->get($JIRABASEURL."secure/admin/util/JellyRunner.jspa", @fields);
+  $response=$ua->get($url);
   if ($response->is_success) {
-    print "Received success response back for file $jellyfn\n";
-
-    print $response->decoded_content();
+    my $content=$response->decoded_content;
+    #print $response->decoded_content;
+    if ($content =~ /Jelly script completed successfully/) {
+      print STDERR "Jelly Processing completed successfully.\n";
+    }
+    else {
+      print STDERR "ERROR: An error occurred during processing. See logs.\n";
+    }
   }
   else {
-    print "ERROR: request for $jellyfn failed\n";
+    die $response->status_line;
   }
 }
+
 
 #######################
 
