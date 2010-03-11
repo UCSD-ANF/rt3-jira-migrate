@@ -86,6 +86,7 @@ my %usermap = (
   'jdigjudy@gmail.com' => 'judy',
   'tshansen@nlanr.net' => 'tshansen',
   'tshansen@ucsd.edu' => 'tshansen',
+  'tshansen@hpwren.ucsd.edu' => 'tshansen',
   'kent' => 'lindquist',
   'clemesha@gmail.com' => 'aclemesh',
 );
