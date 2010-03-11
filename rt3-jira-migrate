@@ -91,6 +91,7 @@ my %usermap = (
   'tshansen@hpwren.ucsd.edu' => 'tshansen',
   'kent' => 'lindquist',
   'clemesha@gmail.com' => 'aclemesh',
+  'taimi' => 'tmulder',
 );
 
 # Function to map RT users to Jira users
