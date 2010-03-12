@@ -848,7 +848,7 @@ my $curfileidx=1; # current file index
 
 # Print how many tickets we have
 print STDERR "\$tickets->Count is ".$numtix."\n";
-
+my $padlen = length($numtix);
 
 # Issues
 while (my $ticket = $tickets->Next) {
@@ -860,7 +860,7 @@ while (my $ticket = $tickets->Next) {
 
     # Start a new file
     # get ready to write Jelly
-    my $filename = sprintf("%s/%s%03d_of_%d%s",
+    my $filename = sprintf("%s/%s%0".$padlen."d_of_%d%s",
       $outdir,
       $outfnprefix,
       $curfileidx,
