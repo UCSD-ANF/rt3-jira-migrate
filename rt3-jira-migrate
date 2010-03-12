@@ -429,6 +429,15 @@ sub processTicketObj($) {
 
   my $ownerUser = new RT::User($RT::SystemUser);
   $ownerUser->Load($ticket->Owner);
+  my $jiraowner; # the Jira owner of the ticket
+  if ($ownerUser->Name eq "Nobody") {
+    # let jira auto-assign the owner based on queue policy
+    $jiraowner="-1";
+  }
+  else {
+    # use the mapUser function to find the jira user
+    $jiraowner=mapUser($ownerUser);
+  }
 
   # Get the ticket description
   my $ticketdesc=getRTTicketDescription($ticket);
@@ -468,7 +477,7 @@ sub processTicketObj($) {
     $ticket->Subject,
     mapPriority($ticket->Priority),
     $firstreqname,
-    mapUser($ownerUser),
+    $jiraowner,
     $ticketdesc,
     fmtDateSQL2Jelly($ticket->Created),
     fmtDateSQL2Jelly($ticket->LastUpdated),
