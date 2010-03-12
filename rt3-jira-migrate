@@ -420,6 +420,13 @@ sub getRTTicketDescription($){
 
 sub processTicketObj($) {
   my $ticket = shift;
+
+  # Skip deleted tickets
+  if ($ticket->Status eq 'deleted'){
+    printf STDERR "NOTICE: skipping deleted ticket %s\n", $ticket->Id;
+    return;
+  }
+
   my $ownerUser = new RT::User($RT::SystemUser);
   $ownerUser->Load($ticket->Owner);
 
