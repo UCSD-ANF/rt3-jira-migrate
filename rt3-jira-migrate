@@ -192,7 +192,7 @@ sub escapeJellyReservedChars($) {
   #s/</&lt;/g;
   #s/>/&gt;/g;
   #s/\$/&#36;/g;
-  s/\$/\$\$/g;
+  s/\${/\$\${/g;
   #s/\*/&#x2a/g;
   #s/\{/&#123/g;
   #s/\}/&#125/g;
@@ -782,14 +782,14 @@ sub jellyStartCreateIssue{
 
   # If we've seen this summary before, tell Jira Jelly to ignore this duplicate summary
   # http://confluence.atlassian.com/display/JIRAKB/Not+able+to+create+an+issue+with+the+same+summary+using+Jelly+Script
-  if ($summaries{$summary}) {
+  if ($summaries{lc($summary)}) {
     push @writerargs, duplicateSummary => "ignore";
   }
 
   $writer->startTag('jira:CreateIssue', @writerargs);
 
   # Increment the summary counter for this unique summary
-  $summaries{$summary}++;
+  $summaries{lc($summary)}++;
 }
 
 # Output Jira Jelly to close a create ticket block.
