@@ -1,0 +1,84 @@
+#!/opt/csw/bin/perl
+
+use warnings;
+use strict;
+
+#use HTTP::Async;
+use LWP::UserAgent;
+use HTTP::Request;
+use Term::ReadKey;
+use DirHandle;
+use URI;
+
+my $JIRABASEURL="https://anfweb-dev.ucsd.edu/jira/";
+my $JIRAUSER="davis";
+my $JIRAPASS;
+my $JELLYDIR="/home/davis/src/IGPP/rt3-jira-migrate/data";
+
+my $CONCURREQ=4; # number of concurrent requests
+
+my $successstr="Jelly script completed successfully";
+my $jellyrunner_path="secure/admin/util/JellyRunner.jspa";
+
+# MAIN
+
+$JIRAPASS=getJiraPasswd();
+my @jellyfiles=getjellyfilenames($JELLYDIR);
+my $ua=LWP::UserAgent->new();
+my $response; # HTTP::Response returned from LWP::UserAgent->get
+
+$ua->timeout(300); # Set timeout to 5 minutes, as some jelly scripts take longer to process than others.
+
+# run each request
+foreach my $fn (@jellyfiles) {
+  my $uri=URI->new($JIRABASEURL . $jellyrunner_path);
+  my @url_params=(
+    os_username => $JIRAUSER,
+    os_password => $JIRAPASS,
+    filename => $fn,
+    script => '',
+    'Run+now' => 'Run+now'
+  );
+  $uri->query_form(\@url_params);
+  print STDERR "-------Requesting jelly processing for file $fn\n";
+  $response=$ua->get($uri->as_string);
+  if ($response->is_success) {
+    my $content=$response->decoded_content;
+    #print $response->decoded_content;
+    if ($content =~ /$successstr/) {
+      print STDERR "Jelly Processing completed successfully.\n";
+    }
+    else {
+      print STDERR "ERROR: An error occurred during processing. See logs.\n";
+    }
+  }
+  else {
+    die $response->status_line;
+  }
+}
+
+
+#######################
+
+# Get password
+sub getJiraPasswd {
+  my $password;
+  print "Please enter password for user $JIRAUSER at $JIRABASEURL\n> ";
+  ReadMode('noecho');
+  $password = ReadLine(0);
+  chomp $password;
+  ReadMode('restore');
+  print "\n";
+  return $password;
+}
+
+# get list of all filenames in JELLYDIR ending in .jelly, sorted
+sub getjellyfilenames {
+  my $dir=shift;
+  my $dh=DirHandle->new($dir) or die "can't opendir $dir: $!";
+  return sort           # sort pathnames
+  grep { -f }           # choose only "plain" files
+  map { "$dir/$_" }     # Create full paths
+  grep { /\.jelly$/ }   # choose only files ending in ".jelly"
+  $dh->read();          # read all entries
+}

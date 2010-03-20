@@ -1,3 +1,4 @@
 sqlpass
 *.tsv
+*.jelly
 data/
