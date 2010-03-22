@@ -177,7 +177,7 @@ sub jellyAddCustomFieldValue ($$){
 # Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
 sub jellyAddComment($$$){
   my $self=shift;
-  my $key=getIssueKey();
+  my $key=$self->getIssueKey();
   my $commenter = shift;
   my $date = shift;
   my $comment = shift;
@@ -221,8 +221,8 @@ sub finishJellyOutput () {
   $self->{'_writer'}->endTag('JiraJelly');
 
 # Finish outputting XML
-  $self->{'_writer}'}->end();
-  $self->{'_output}'}->close();
+  $self->{'_writer'}->end();
+  $self->{'_output'}->close();
 
   $self->{'_jellystarted'}=0;
 }
@@ -232,5 +232,48 @@ sub DESTROY{
 
   $self->finishJellyOutput() if $self->{'_jellystarted'};
 }
+
+# Remove invalid XML unicode characters
+# This function ensures that the output string has only valid XML Unicode 
+# characters as specified by the XML 1.0 standard. For reference, please 
+# see the standard: 
+#   http://www.w3.org/TR/REC-xml/#charsets
+#
+# This function will return an empty string if the input is null or empty.
+#
+# Solution cobbled together based on this post:
+# http://cse-mjmcl.cse.bris.ac.uk/blog/2007/02/14/1171465494443.html
+sub cleanXML($) {
+  my $input=shift;
+  my $output=$input; # string to hold the output
+  unless ($input) {
+    print STDERR "cleanXML: no input\n";
+    return '';
+  }
+
+  $output =~ s/[^\x{0009}\x{000A}\x{000D}\x{0020}-\x{D7FF}\x{E000}-\x{FFFD}\x{10000}-\x{10FFFF}]//g;
+  #printf STDERR "cleanXML: removed %d chars from input\n", length($input)-length($output);
+  return $output;
+}
+
+# Additional escapes to remove characters that cause problems with Jelly parsing
+sub escapeJellyReservedChars($) {
+  $_=shift;
+  my $input=$_;
+
+  #s/&/&amp;/g;
+  #s/"/&quot;/g;
+  #s/</&lt;/g;
+  #s/>/&gt;/g;
+  #s/\$/&#36;/g;
+  s/\${/\$\${/g;
+  #s/\*/&#x2a/g;
+  #s/\{/&#123/g;
+  #s/\}/&#125/g;
+  #s/\+/&#43/g;
+
+  return $_;
+}
+
 
 return 1;
