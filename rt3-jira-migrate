@@ -10,10 +10,6 @@ use lib "/opt/rt3/lib";
 
 use JellyWriter;
 
-# Need this to make sure we're writing clean XML
-use XML::Writer;
-use IO::File;
-
 # Import RT's API
 use RT::Interface::CLI qw(CleanEnv loc);
 use RT::Tickets;
