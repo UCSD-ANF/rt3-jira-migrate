@@ -26,6 +26,17 @@ sub new {
   return $self;
 }
 
+sub Writer {
+  my $self=shift;
+  return $self->{'_writer'};
+}
+
+sub _setWriter {
+  my $self=shift;
+  my $writer=shift;
+  $self->{'_writer'}=$writer;
+}
+
 sub _Init {
   my $self = shift;
   my %args = (
@@ -41,7 +52,7 @@ sub _Init {
 
 }
 
-sub getIssueKey {
+sub IssueKey {
   my $self = shift;
   return $self->{'IssueKey'};
 }
@@ -53,7 +64,7 @@ sub setIssueKey {
 
 sub jellyWkFlowStartProgress{
   my $self = shift;
-  my $key=$self->getIssueKey();
+  my $key=$self->IssueKey();
   my $user=shift;
   my @params=(
     key => '${'.$key.'}',
@@ -61,7 +72,7 @@ sub jellyWkFlowStartProgress{
   );
   push (@params, user=>$user) if $user;
 
-  $self->{'_writer'}->emptyTag('jira:TransitionWorkflow',@params);
+  $self->Writer->emptyTag('jira:TransitionWorkflow',@params);
 
   # Log the user mapping and return
   $users{$user}++ if $user;
@@ -69,7 +80,7 @@ sub jellyWkFlowStartProgress{
 
 sub jellyWkFlowStopProgress{
   my $self = shift;
-  my $key=$self->getIssueKey();
+  my $key=$self->IssueKey();
   my $user=shift;
   my @params=(
     key=>'${'.$key.'}',
@@ -77,7 +88,7 @@ sub jellyWkFlowStopProgress{
   );
   push (@params, user=>$user) if $user;
 
-  $self->{'_writer'}->emptyTag('jira:TransitionWorkflow', @params);
+  $self->Writer->emptyTag('jira:TransitionWorkflow', @params);
 
   # Log the user mapping and return
   $users{$user}++ if $user;
@@ -85,7 +96,7 @@ sub jellyWkFlowStopProgress{
 
 sub jellyWkFlowCloseIssue{
   my $self=shift;
-  my $key=$self->getIssueKey();
+  my $key=$self->IssueKey();
   my $resolution=shift;
   my $user=shift;
   my @params=(
@@ -95,7 +106,7 @@ sub jellyWkFlowCloseIssue{
   push (@params, user => $user) if $user;
   push (@params, resolution => $resolution) if $resolution;
 
-  $self->{'_writer'}->emptyTag('jira:TransitionWorkflow', @params);
+  $self->Writer->emptyTag('jira:TransitionWorkflow', @params);
 
   # Log the user mapping and return
   $users{$user}++ if $user;
@@ -103,7 +114,7 @@ sub jellyWkFlowCloseIssue{
 
 sub jellyWkFlowReopenIssue{
   my $self=shift;
-  my $key=$self->getIssueKey();
+  my $key=$self->IssueKey();
   my $user=shift;
 
   my @params=(
@@ -113,7 +124,7 @@ sub jellyWkFlowReopenIssue{
 
   push (@params, 'user'=>$user) if $user;
 
-  $self->{'_writer'}->emptyTag('jira:TransitionWorkflow', @params);
+  $self->Writer->emptyTag('jira:TransitionWorkflow', @params);
 
   # Log the user mapping and return
   $users{$user}++ if $user;
@@ -122,7 +133,7 @@ sub jellyWkFlowReopenIssue{
 # Output Jira Jelly to create a ticket.
 sub jellyStartCreateIssue{
   my $self=shift;
-  my $issueKeyVar=$self->getIssueKey();
+  my $issueKeyVar=$self->IssueKey();
   my $projkey=shift;
   my $summary=shift;
   my $priority=shift;
@@ -150,7 +161,7 @@ sub jellyStartCreateIssue{
     push @writerargs, duplicateSummary => "ignore";
   }
 
-  $self->{'_writer'}->startTag('jira:CreateIssue', @writerargs);
+  $self->Writer->startTag('jira:CreateIssue', @writerargs);
 
   # Increment the summary counter for this unique summary
   $summaries{lc($summary)}++;
@@ -159,7 +170,7 @@ sub jellyStartCreateIssue{
 # Output Jira Jelly to close a create ticket block.
 sub jellyFinishCreateTicket(){
   my $self=shift;
-  $self->{'_writer'}->endTag('jira:CreateIssue');
+  $self->Writer->endTag('jira:CreateIssue');
 }
 
 # Output Jira Jelly Custom Field Value. This must be called within a jellyStartCreateIssue
@@ -169,7 +180,7 @@ sub jellyAddCustomFieldValue ($$){
   my $fieldname=shift;
   my $value=shift;
 
-  $self->{'_writer'}->emptyTag('jira:AddCustomFieldValue',
+  $self->Writer->emptyTag('jira:AddCustomFieldValue',
     name=>$fieldname, value=>$value);
   $customfields{$fieldname}->{$value}++;
 }
@@ -177,12 +188,12 @@ sub jellyAddCustomFieldValue ($$){
 # Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
 sub jellyAddComment($$$){
   my $self=shift;
-  my $key=$self->getIssueKey();
+  my $key=$self->IssueKey();
   my $commenter = shift;
   my $date = shift;
   my $comment = shift;
 
-  $self->{'_writer'}->emptyTag('jira:AddComment',
+  $self->Writer->emptyTag('jira:AddComment',
     'issue-key'=>'${'.$key.'}',
     commenter=>$commenter,
     created=>$date,
@@ -196,18 +207,18 @@ sub startJellyOutput ($) {
   croak("Trying to startJellyOutput on a file that already has been started",@_) if $self->{'_jellystarted'};
   # Start outputting XML
   $self->{'_output'} = new IO::File( ">" . $self->{'Filename'} );
-  $self->{'_writer'} = new XML::Writer(
+  $self->_setWriter(new XML::Writer(
     OUTPUT => $self->{'_output'}, 
     ENCODING => 'utf-8',
     #   NEWLINES => 'true',
     DATA_MODE => 'true',
     DATA_INDENT => '2'
-  );
+  ));
 
-  $self->{'_writer'}->xmlDecl();
+  $self->Writer->xmlDecl();
 
   # Start Writing Jelly
-  $self->{'_writer'}->startTag('JiraJelly', 'xmlns:jira' => 'jelly:com.atlassian.jira.jelly.enterprise.JiraTagLib');
+  $self->Writer->startTag('JiraJelly', 'xmlns:jira' => 'jelly:com.atlassian.jira.jelly.enterprise.JiraTagLib');
 
   $self->{'_jellystarted'}=1;
   return;
@@ -218,10 +229,10 @@ sub finishJellyOutput () {
 
   croak ("Trying to finishJellyOutput on a file that is not open", @_) unless $self->{'_jellystarted'};
   # Done with Jelly
-  $self->{'_writer'}->endTag('JiraJelly');
+  $self->Writer->endTag('JiraJelly');
 
 # Finish outputting XML
-  $self->{'_writer'}->end();
+  $self->Writer->end();
   $self->{'_output'}->close();
 
   $self->{'_jellystarted'}=0;
@@ -275,5 +286,65 @@ sub escapeJellyReservedChars($) {
   return $_;
 }
 
+# Combine multiple text values in an array into a single text field, and generate jelly tag only if there are values
+# Params:
+#  The Jira Field Name
+#  A reference to an array containing the RT field values
+sub multitext2textfield($$){
+  my $self = shift;
+  my $jirafieldname = shift;
+  my $values_ref = shift;
 
+  $self->jellyAddCustomFieldValue($jirafieldname, join ("\n", @$values_ref)) if scalar @$values_ref;
+}
+
+# combine multiple URL entries from an RT CustomField into a single Jira CustomField
+sub multiurl2textfield($$){
+  my $self = shift;
+  my $fieldname = shift; # The Jira Name of the Custom Field
+  my $values_ref = shift; # A reference to an array containing values
+  my @cleanvals; # array to hold the URLS stripped of their surrounding wikitext markup
+  my $finalval; # the value that actually gets put into the Jira Custom Field
+
+  # Don't do anything unless we have values to process
+  return unless (scalar @$values_ref > 0) ;
+
+  # Strip off wikitext square braces around URLs
+  # There may be multiple lines in the wikitext area so split that up
+  foreach my $val (@$values_ref) {
+    my @linevals=split (/\n/, $val);
+    foreach my $lineval (@linevals) {
+      $lineval =~ s/^\[(.*)\]$/$1/;
+      push @cleanvals, $lineval;
+    }
+  }
+
+  $finalval = join ("\n", @cleanvals);
+  $self->jellyAddCustomFieldValue($fieldname, $finalval);
+}
+
+sub multitext2multiselect($$){
+  my $self=shift;
+  my $jirafieldname = shift;
+  my $values_ref = shift;
+
+  foreach my $val (@$values_ref) {
+    $self->jellyAddCustomFieldValue($jirafieldname, $val);
+  }
+}
+
+# Reporting functions
+sub getJiraUsers {
+  return keys %users;
+}
+
+sub getJiraCustomFieldNames(){
+  return keys %customfields;
+}
+
+sub getJiraCustomFieldValues($){
+  my $fn = shift;
+
+  return keys %{$customfields{$fn}};
+}
 return 1;

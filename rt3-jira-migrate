@@ -3,12 +3,13 @@
 use warnings;
 use strict;
 
-package rt3jiramigrate;
+package main;
 
 # Modify this to point to the Request Tracker installation location
 use lib "/opt/rt3/lib";
 
 use JellyWriter;
+use RT3_Jira_Mapper;
 
 # Import RT's API
 use RT::Interface::CLI qw(CleanEnv loc);
@@ -31,263 +32,12 @@ my $outfnprefix="rt3-jira-migrate-"; # output file prefix
 my $outfnsuffix=".jelly"; # output file suffix
 my $numtixperfile=1; # Maximum number of tickets per file
 
-# The username to use as the reporter when an RT transaction is from a non-JIRA user
-my $anonuser = "anon";
 
 # The Jira custom field used to track the RT ticket number
 my $rttktidfn="RT3 Ticket Number";
 
 my $jellywriter; # JellyWriter object
 
-my %anonusers; # List of RT users that are treated as the anonymous user, key is username, value is count
-
-# Map of RT users to Jira users
-my %usermap = (
-  'rob'           => 'rnewman',
-  'rmellors@geology.sdsu.edu' => 'rmellors',
-  'lastiz@ucsd.edu' => 'lastiz',
-  'RT_System' => 'davis',
-  'Nobody' => 'davis',
-  'eakins@epicenter.ucsd.edu' => 'eakins',
-  'davis@epicenter.ucsd.edu' => 'davis',
-  'jeakins@unavco.org' => 'eakins',
-  'danny@brtt.com' => 'danny',
-  'leyer@ucsd.edu' => 'leyer',
-  'pavlis@indiana.edu' => 'pavlis',
-  'allan.sauter@gmail.com' => 'sauter',
-  'geoff@geoffdavis.com' => 'davis',
-  'busby@iris.edu' => 'busby',
-  'rnitz@comm-systems.com' => 'rnitz',
-  'jkim@sciences.sdsu.edu' => 'jkim',
-  'vernon@brtt.com' => 'vernon',
-  'davidechavez@gmail.com' => 'dechavez',
-  'dchavez@ucsd.edu' => 'dechavez',
-  'jbytof@ucsd.edu' => 'jbytof',
-  'thim22@gmail.com' => 'thim',
-  'dcconstant@ucsd.edu' => 'delia',
-  'root' => 'davis',
-  'reyes@ucsd.edu' => 'reyes',
-  'hafner@iris.edu' => 'hafner',
-  'k9pv@sdc.org' => 'k9pv',
-  'eakins.jennifer@gmail.com' => 'eakins',
-  'judy@ucsd.edu' => 'judy',
-  'jdigjudy@gmail.com' => 'judy',
-  'tshansen@nlanr.net' => 'tshansen',
-  'tshansen@ucsd.edu' => 'tshansen',
-  'tshansen@hpwren.ucsd.edu' => 'tshansen',
-  'kent' => 'lindquist',
-  'clemesha@gmail.com' => 'aclemesh',
-  'taimi' => 'tmulder',
-);
-
-# Function to map RT users to Jira users
-#
-# Since we are not creating new Jira users automatically, any unknown email
-# address needs to be mapped to an anonymous user. This mimics the behavior of
-# the Jira "Mail Service Handler" with createusers="false" and 
-# reporterusername="anon"
-# This function expects to get passed an RT::User object
-sub mapUser($) {
-  my $rtuser=shift; # an RT::User object
-  my $name; #bare RT username
-  my $jirauser; #username to return
-
-  $name=$rtuser->Name; # Cache the username from the RT::User object
-  if ($rtuser->Privileged){
-    # If the user is a privileged RT user, we assume the user exists in Jira,
-    # rather than returning an anonymous user
-    $jirauser=$name;
-    # We then check to see if the RT username has been mapped to a different
-    # Jira username
-    if (exists $usermap{$name}){
-      $jirauser=$usermap{$name};
-    }
-  }
-  else {
-
-    # The user is not a privileged RT user
-    # but it may be mapped to a real jira user
-    # Remap the username if the username is in the map 
-    if (exists $usermap{$name}){
-      $jirauser=$usermap{$name};
-    }
-    else {
-      # We have an anonymous user. Log it.
-      $jirauser=$anonuser;
-      $anonusers{$name}++;
-    }
-
-  }
-  return $jirauser;
-}
-
-# isAnon takes a ref to a RT::User object and determines if the user is an anonymous user.
-# The following logic applies:
-# if RT::User says it's a privileged user in RT, isAnon returns false
-# elsif mapUser has an entry for the RTUser that is not $anonuser, isAnon returns false
-# else isAnon returns true
-sub isAnon($){
-  my $rtUser=shift;
-  my $name = $rtUser->Name;
-
-  if ($rtUser->Privileged) {
-    return 0;
-  }
-  elsif ( grep (/^$name$/,keys(%usermap))) {
-    # user was found in the usermap, so we'll assume it's in Jira
-    return 0;
-  } 
-
-  # User is anonymous
-  # don't log, we'll let mapUser do the logging in anonusers
-  return 1;
-}
-
-# Map of RT priority numbers to Jira priorities
-my %prioritymap = (
-  3     =>      "Major",
-  2     =>      "Critical",
-  4     =>      "Minor",
-  1     =>      "Blocker",
-  5     =>      "Trivial",
-  99    =>      "Blocker",
-  0     =>      "Trivial",
-  15    =>      "Major",
-  10    =>      "Major",
-);
-
-# Function to map RT priorities to Jira Priorities
-sub mapPriority($){
-  my $priority=shift;
-  my $default = "Minor";
-  return $default if ($priority eq "");
-
-  if ( exists($prioritymap{$priority}) ){
-    $priority = $prioritymap{$priority};
-  } else {
-    print STDERR "Fallback to Jira priority $default for RT priority $priority\n";
-    $priority = $default;
-  }
-  return $priority;
-}
-
-my %queuemap = (
-  General       => "SYS",
-  LACOFD        => "LACOFD",
-  ROADNet       => "ROADNET",
-  ANZA          => "ANZA",
-  SysAdmin      => "SYS",
-  webapps       => "WWW",
-  Backups       => "BACKUP",
-  WebDev        => "WWW",
-  USArray       => "TA",
-  HiSeasNet     => "HSN",
-  PBO           => "PBO",
-);
-
-# Map RT Quenename to Jira project Key
-sub mapQueueToProject($){
-  my $queue=shift;
-  my $default="SYS";
-
-  return $default if ($queue eq "");
-
-  if (exists $queuemap{$queue}) {
-    $queue=$queuemap{$queue};
-  } else {
-    print STDERR "Fallback to $default project for RT queue $queue\n";
-    $queue=$default;
-  }
-  return $queue;
-}
-
-# Map of RT Custom Field names to their Jira names, and a processing function to handle multple values for a field.
-# defaults are specifed in the "-default-" record
-#
-# If no jiraname is specified, it defaults to the RT Field Name
-my %cfmap = (
-  "Documentation Link" => { 
-    jiraname => "Documentation Link", 
-    procfunc => \&multiurl2textfield,
-  },
-  "Vendor Ticket #" => {
-    jiraname => "Vendor Ticket Id",
-  },
-  "Sat Station" => {
-    jiraname => "Satellite Station",
-    procfunc => \&multitext2multiselect,
-  },
-  Server => {
-    jiraname => "Hosts Affected",
-  },
-  "-default-" => {
-    procfunc => \&multitext2textfield,
-  }
-);
-
-# Combine multiple values in an RT Multiple Value text field into a single text field, and generate jelly tag only if there are values
-# Params:
-#  The Jira Field Name
-#  A reference to an array containing the RT field values
-sub multitext2textfield($$){
-  my $jirafieldname = shift;
-  my $values_ref = shift;
-
-  $jellywriter->jellyAddCustomFieldValue($jirafieldname, join ("\n", @$values_ref)) if scalar @$values_ref;
-}
-
-# combine multiple URL entries from an RT CustomField into a single Jira CustomField
-sub multiurl2textfield($$){
-  my $fieldname = shift; # The Jira Name of the Custom Field
-  my $values_ref = shift; # A reference to an array containing values
-  my @cleanvals; # array to hold the URLS stripped of their surrounding wikitext markup
-  my $finalval; # the value that actually gets put into the Jira Custom Field
-
-  # Don't do anything unless we have values to process
-  return unless (scalar @$values_ref > 0) ;
-
-  # Strip off wikitext square braces around URLs
-  # There may be multiple lines in the wikitext area so split that up
-  foreach my $val (@$values_ref) {
-    my @linevals=split (/\n/, $val);
-    foreach my $lineval (@linevals) {
-      $lineval =~ s/^\[(.*)\]$/$1/;
-      push @cleanvals, $lineval;
-    }
-  }
-
-  $finalval = join ("\n", @cleanvals);
-  $jellywriter->jellyAddCustomFieldValue($fieldname, $finalval);
-}
-
-sub multitext2multiselect($$){
-  my $jirafieldname = shift;
-  my $values_ref = shift;
-
-  foreach my $val (@$values_ref) {
-    $jellywriter->jellyAddCustomFieldValue($jirafieldname, $val);
-  }
-}
-
-# Map RT Custom Field Names to Jira Custom Field Names
-sub mapCFNames ($) {
-  my $field=shift;
-
-  $field=$cfmap{$field}{'jiraname'} if (exists $cfmap{$field}{'jiraname'});
-
-  return $field;
-}
-
-# Map RT Custom Fields to a processing function
-# returns a reference to a function
-sub mapCFProc ($) {
-  my $field=shift;
-
-  if (exists $cfmap{$field}{'procfunc'}) {
-    return $cfmap{$field}{'procfunc'};
-  }
-  return $cfmap{'-default-'}{'procfunc'};
-}
 
 sub processTicketCustomFields($){
   my $Ticket=shift;
@@ -306,7 +56,7 @@ sub processTicketCustomFields($){
 
     # Extract the content of the custom field values and put it into an array
     my @vals = map { $_->Content } @$cfval_ref;
-    &mapCFProc($rtfn)->($jirafn,\@vals);
+    &mapCFProc($rtfn)->($jellywriter, $jirafn, \@vals);
   }
 }
 
@@ -362,13 +112,13 @@ sub processTicketObj($) {
   # We'll only use one, based on the following priority
   # * The first privileged user (or non-prived RT user that is mapped to a Jira user)
   # * The first non-privileged user
-  my $firstreqname = $anonuser;
+  my $firstreqname = AnonUser();
   my $firstexternalemail;
   while ( my $requestor = $requestors->Next ) {
     # loop through to see if any of the requestors is a Jira user
     if (isAnon($requestor)){
       $firstexternalemail=$requestor->EmailAddress unless $firstexternalemail; # preserve the firstexternalmail
-      $firstreqname=$anonuser;
+      $firstreqname=RT3_Jira_Mapper::AnonUser();
     } else {
       $firstreqname=mapUser($requestor);
       $firstexternalemail="";
@@ -615,7 +365,7 @@ sub processTicket($) {
 
   &processTicketObj($ticket);
 
-  &rt3jiramigrate::processTicketTransactions($ticket);
+  &processTicketTransactions($ticket);
 }
 
 ######### MAIN #########
@@ -672,24 +422,24 @@ while (my $ticket = $tickets->Next) {
 $jellywriter->finishJellyOutput() if $jellywriter;
 
 print STDERR "The following users should be created:\n\t";
-print STDERR join "\n\t", keys %JellyWriter::users;
+print STDERR join "\n\t", JellyWriter::getJiraUsers();
 print STDERR "\n";
 
 print STDERR "The following users are treated as Anonymous\n\t";
-print STDERR join "\n\t", keys %anonusers;
+print STDERR join "\n\t", RT3_Jira_Mapper::getRTAnonUsers;
 print STDERR "\n";
 
 print STDERR "The following Custom Fields should be created:\n\t";
-print STDERR join "\n\t", keys %JellyWriter::customfields;
+print STDERR join "\n\t", JellyWriter::getJiraCustomFieldNames();
 print STDERR "\n";
 
 print STDERR "\n------------\n";
 print STDERR "Unique values in the custom fields (for use with Multi Select Jira fields):";
-foreach my $fn (keys %JellyWriter::customfields){
+foreach my $fn (JellyWriter::getJiraCustomFieldNames){
   next if ($fn =~ /^RT3/);
 
   print STDERR "Field $fn:";
-  print STDERR Dumper( $JellyWriter::customfields{$fn} );
+  print STDERR join "\n\t", JellyWriter::getJiraCustomFieldValues($fn);
 
   print "\n";
 }
