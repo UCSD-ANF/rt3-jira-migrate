@@ -8,6 +8,8 @@ package rt3jiramigrate;
 # Modify this to point to the Request Tracker installation location
 use lib "/opt/rt3/lib";
 
+use JellyWriter;
+
 # Need this to make sure we're writing clean XML
 use XML::Writer;
 use IO::File;
@@ -39,21 +41,9 @@ my $anonuser = "anon";
 # The Jira custom field used to track the RT ticket number
 my $rttktidfn="RT3 Ticket Number";
 
-my $_issuekey="key"; # issue key, don't access directly
+my $jellywriter; # JellyWriter object
 
-#
-# Reporting variables
-#
-
-my @components; # List of components to create
-my @milestones; # List of milestones to create
-my %users; # List of users that should exist in Jira before import, key is username, value is count
 my %anonusers; # List of RT users that are treated as the anonymous user, key is username, value is count
-my %customfields; # List of customfields that should exist in Jira before import
-my %summaries; # List of summaries - Duplicate summary detection
-
-my $writer; # XML-Writer instance for Jelly file
-my $output; # Output IO handle for XML-Writer
 
 # Map of RT users to Jira users
 my %usermap = (
@@ -132,8 +122,6 @@ sub mapUser($) {
     }
 
   }
-  # Log the user mapping and return
-  $users{$jirauser}++;
   return $jirauser;
 }
 
@@ -291,7 +279,7 @@ sub multitext2textfield($$){
   my $jirafieldname = shift;
   my $values_ref = shift;
 
-  jellyAddCustomFieldValue($jirafieldname, join ("\n", @$values_ref)) if scalar @$values_ref;
+  $jellywriter->jellyAddCustomFieldValue($jirafieldname, join ("\n", @$values_ref)) if scalar @$values_ref;
 }
 
 # combine multiple URL entries from an RT CustomField into a single Jira CustomField
@@ -315,7 +303,7 @@ sub multiurl2textfield($$){
   }
 
   $finalval = join ("\n", @cleanvals);
-  jellyAddCustomFieldValue($fieldname, $finalval);
+  $jellywriter->jellyAddCustomFieldValue($fieldname, $finalval);
 }
 
 sub multitext2multiselect($$){
@@ -323,7 +311,7 @@ sub multitext2multiselect($$){
   my $values_ref = shift;
 
   foreach my $val (@$values_ref) {
-    jellyAddCustomFieldValue($jirafieldname, $val);
+    $jellywriter->jellyAddCustomFieldValue($jirafieldname, $val);
   }
 }
 
@@ -375,34 +363,6 @@ sub initRT {
   RT::Init(); # Connect to the database. Set up logging
 
   return
-}
-
-sub startJellyOutput ($) {
-  my $fn=shift;
-  # Start outputting XML
-  $output = new IO::File(">$fn");
-  $writer = new XML::Writer(OUTPUT => $output, 
-    ENCODING => 'utf-8',
-    #   NEWLINES => 'true',
-    DATA_MODE => 'true',
-    DATA_INDENT => '2'
-  );
-
-  $writer->xmlDecl();
-
-# Start Writing Jelly
-  $writer->startTag('JiraJelly', 'xmlns:jira' => 'jelly:com.atlassian.jira.jelly.enterprise.JiraTagLib');
-
-  return;
-}
-
-sub finishJellyOutput () {
-  # Done with Jelly
-  $writer->endTag('JiraJelly');
-
-# Finish outputting XML
-  $writer->end();
-  $output->close();
 }
 
 sub getRTTicketDescription($){
@@ -472,7 +432,7 @@ sub processTicketObj($) {
   $ticketdesc=escapeJellyReservedChars($ticketdesc);
 
   # Create Issue
-  jellyStartCreateIssue(
+  $jellywriter->jellyStartCreateIssue(
     mapQueueToProject($ticket->QueueObj->Name),
     $ticket->Subject,
     mapPriority($ticket->Priority),
@@ -484,7 +444,7 @@ sub processTicketObj($) {
   );
 
   # Insert RT3 Ticket Number Custom Field
-  jellyAddCustomFieldValue($rttktidfn, $ticket->Id);
+  $jellywriter->jellyAddCustomFieldValue($rttktidfn, $ticket->Id);
 
   #my $CustomFields = $ticket->CustomFields;
   #while ( my $CustomField = $CustomFields->Next ) {
@@ -499,7 +459,7 @@ sub processTicketObj($) {
   processTicketCustomFields($ticket);
 
   # End Issue
-  jellyFinishCreateTicket();
+  $jellywriter->jellyFinishCreateTicket();
 }
 
 # foreach comment: generate jelly script to add a comment to existing ticket
@@ -568,68 +528,16 @@ sub processTicketTransactions($) {
   if ( $finalstatus =~ /^(new|stalled|open)$/ ){
     if ($reopenctr) {
       # TODO: We don't track whether previous close was a fixed or won't fix situation
-      jellyWkFlowCloseIssue("Fixed",$lastcloseduser);
-      jellyWkFlowReopenIssue($laststatususer);
+      $jellywriter->jellyWkFlowCloseIssue("Fixed",$lastcloseduser);
+      $jellywriter->jellyWkFlowReopenIssue($laststatususer);
     }
     # else - since jira issues created in jelly are already in an open state, we'll do nothing
   } elsif ( $finalstatus =~ /^(rejected|resolved|deleted)$/ ) {
-    jellyWkFlowCloseIssue(mapResolution($finalstatus),$laststatususer);
+    $jellywriter->jellyWkFlowCloseIssue(mapResolution($finalstatus),$laststatususer);
   }
   else {
     die(sprintf("Unknown final status %s encountered on Ticket %d",$finalstatus,$Ticket->Id));
   }
-}
-
-sub jellyWkFlowStartProgress{
-  my $key=getIssueKey();
-  my $user=shift;
-  my @params=(
-    key => '${'.$key.'}',
-    workflowAction => 'Start Progress',
-  );
-  push (@params, user=>$user) if $user;
-
-  $writer->emptyTag('jira:TransitionWorkflow',@params);
-}
-
-sub jellyWkFlowStopProgress{
-  my $key=getIssueKey();
-  my $user=shift;
-  my @params=(
-    key=>'${'.$key.'}',
-    workflowAction=> 'Stop Progress',
-  );
-  push (@params, user=>$user) if $user;
-
-  $writer->emptyTag('jira:TransitionWorkflow', @params);
-}
-
-sub jellyWkFlowCloseIssue{
-  my $key=getIssueKey();
-  my $resolution=shift;
-  my $user=shift;
-  my @params=(
-    workflowAction => 'Close Issue',
-    key => '${'.$key.'}',
-  );
-  push (@params, user => $user) if $user;
-  push (@params, resolution => $resolution) if $resolution;
-
-  $writer->emptyTag('jira:TransitionWorkflow', @params);
-}
-
-sub jellyWkFlowReopenIssue{
-  my $key=getIssueKey();
-  my $user=shift;
-
-  my @params=(
-    key=>'${'.$key.'}',
-    workflowAction=>'Reopen Issue',
-  );
-
-  push (@params, 'user'=>$user) if $user;
-
-  $writer->emptyTag('jira:TransitionWorkflow', @params);
 }
 
 # RT states to Jira resolutions
@@ -670,7 +578,7 @@ sub Transaction2Comment($) {
     # pre-pend blurb to comment
     $transcontent="Comment from Non-Jira User: $origuser <$origemail>\n".$transcontent;
   }
-  jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
+  $jellywriter->jellyAddComment($transuser,$transdate,$transcontent); # Add the Jelly Command
   return 0;
 }
 
@@ -687,34 +595,34 @@ sub Transaction2WorkflowTransition($) {
       return 1;# do nothing
     }
     elsif ($newstatus eq 'open') {
-      jellyWkFlowStartProgress($user);
+      $jellywriter->jellyWkFlowStartProgress($user);
       return 1;
     }
     elsif ( $newstatus =~ /^(rejected|deleted|resolved)$/ ) {
-      jellyWkFlowCloseIssue(&mapResolution($newstatus), $user);
+      $jellywriter->jellyWkFlowCloseIssue(&mapResolution($newstatus), $user);
       return 1;
     }
   } 
   elsif ($oldstatus eq 'open') {
     # Jira Issue should be in an "In Progress" state
     if ( $newstatus =~ /^(new|stalled)$/ ){
-      jellyWkFlowStopProgress($user);
+      $jellywriter->jellyWkFlowStopProgress($user);
       return 1;
     }
     elsif ( $newstatus =~ /^(rejected|deleted|resolved)$/ ) {
-      jellyWkFlowCloseIssue(mapResolution($newstatus), $user);
+      $jellywriter->jellyWkFlowCloseIssue(mapResolution($newstatus), $user);
       return 1;
     }
   }
   elsif ($oldstatus =~ /^(rejected|resolved|deleted)$/) {
     # Jira Issue should be in a closed state
     if ( $newstatus eq "new" ) {
-      jellyWkFlowReopenIssue($user);
+      $jellywriter->jellyWkFlowReopenIssue($user);
       return 1;
     }
     elsif ( $newstatus eq "open" ) {
-      jellyWkFlowReopenIssue($user);
-      jellyWkFlowStartProgress($user);
+      $jellywriter->jellyWkFlowReopenIssue($user);
+      $jellywriter->jellyWkFlowStartProgress($user);
       return 1;
     }
     elsif ( $oldstatus eq "rejected" && $newstatus eq "resolved" ){
@@ -727,16 +635,6 @@ sub Transaction2WorkflowTransition($) {
   # Unknown RT status
   printf STDERR "ERROR: Transaction %d -- Unhandled RT Status Transition %s -> %s", $Transaction->Id, $oldstatus, $newstatus;
   return 1;
-}
-
-# generate an issue key id to be used for per ticket transactions
-# Takes an RT::Ticket object as input
-sub getIssueKey() {
-  return $_issuekey;
-}
-
-sub setIssueKey($) {
-  $_issuekey=shift;
 }
 
 # Format a Date in SQL format in a Jira Jelly-ready format
@@ -756,78 +654,10 @@ sub fmtDateSQL2Jelly ($) {
   return $result;
 }
 
-# Output Jira Jelly to create a ticket.
-sub jellyStartCreateIssue{
-  my $issueKeyVar=getIssueKey();
-  my $projkey=shift;
-  my $summary=shift;
-  my $priority=shift;
-  my $reporter=shift;
-  my $assignee=shift;
-  my $description=shift;
-  my $created=shift;
-  my $updated=shift;
-
-  my @writerargs = (
-    'project-key' => $projkey,
-    issueKeyVar => $issueKeyVar,
-    summary => $summary,
-    priority => $priority,
-    reporter => $reporter,
-    assignee => $assignee,
-    description => $description,
-    created => $created,
-    updated => $updated,
-  );
-
-  # If we've seen this summary before, tell Jira Jelly to ignore this duplicate summary
-  # http://confluence.atlassian.com/display/JIRAKB/Not+able+to+create+an+issue+with+the+same+summary+using+Jelly+Script
-  if ($summaries{lc($summary)}) {
-    push @writerargs, duplicateSummary => "ignore";
-  }
-
-  $writer->startTag('jira:CreateIssue', @writerargs);
-
-  # Increment the summary counter for this unique summary
-  $summaries{lc($summary)}++;
-}
-
-# Output Jira Jelly to close a create ticket block.
-sub jellyFinishCreateTicket(){
-  $writer->endTag('jira:CreateIssue');
-}
-
-# Output Jira Jelly Custom Field Value. This must be called within a jellyStartCreateIssue
-# and a jellyFinishCreateTicket block
-sub jellyAddCustomFieldValue ($$){
-  my $fieldname=shift;
-  my $value=shift;
-
-  $writer->emptyTag('jira:AddCustomFieldValue',
-    name=>$fieldname, value=>$value);
-  $customfields{$fieldname}->{$value}++;
-
-}
-
-# Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
-sub jellyAddComment($$$){
-  my $key=getIssueKey();
-  my $commenter = shift;
-  my $date = shift;
-  my $comment = shift;
-
-  $writer->emptyTag('jira:AddComment',
-    'issue-key'=>'${'.$key.'}',
-    commenter=>$commenter,
-    created=>$date,
-    updated=>$date,
-    comment=>escapeJellyReservedChars(cleanXML($comment)));
-}
-
 sub processTicket($) {
   my $ticket = shift;
   print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
-  setIssueKey("rt".$ticket->Id);
+  $jellywriter->setIssueKey("rt".$ticket->Id);
 
   &processTicketObj($ticket);
 
@@ -863,8 +693,8 @@ my $padlen = length($numtix);
 while (my $ticket = $tickets->Next) {
   if (($tickets->_ItemsCounter-1)%$numtixperfile == 0){
     # close the existing file if any
-    if ($writer) {
-      finishJellyOutput ();
+    if ($jellywriter) {
+      $jellywriter->finishJellyOutput();
     }
 
     # Start a new file
@@ -877,17 +707,18 @@ while (my $ticket = $tickets->Next) {
       $outfnsuffix
     );
     printf STDERR "Starting new file \"%s\"\n", $filename;
-    startJellyOutput($filename);
+    $jellywriter=new JellyWriter( Filename=>$filename );
+    $jellywriter->startJellyOutput($filename);
     $curfileidx++; #increment the current file counter
   }
   processTicket($ticket);
 }
 
 # finish up our XML document
-finishJellyOutput();
+$jellywriter->finishJellyOutput() if $jellywriter;
 
 print STDERR "The following users should be created:\n\t";
-print STDERR join "\n\t", keys %users;
+print STDERR join "\n\t", keys %JellyWriter::users;
 print STDERR "\n";
 
 print STDERR "The following users are treated as Anonymous\n\t";
@@ -895,16 +726,16 @@ print STDERR join "\n\t", keys %anonusers;
 print STDERR "\n";
 
 print STDERR "The following Custom Fields should be created:\n\t";
-print STDERR join "\n\t", keys %customfields;
+print STDERR join "\n\t", keys %JellyWriter::customfields;
 print STDERR "\n";
 
 print STDERR "\n------------\n";
 print STDERR "Unique values in the custom fields (for use with Multi Select Jira fields):";
-foreach my $fn (keys %customfields){
+foreach my $fn (keys %JellyWriter::customfields){
   next if ($fn =~ /^RT3/);
 
   print STDERR "Field $fn:";
-  print STDERR Dumper( $customfields{$fn} );
+  print STDERR Dumper( $JellyWriter::customfields{$fn} );
 
   print "\n";
 }
