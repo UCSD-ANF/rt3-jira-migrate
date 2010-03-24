@@ -7,7 +7,7 @@ use warnings;
 use strict;
 
 our @ISA = qw(Exporter);
-our @EXPORT = qw( AnonUser setAnonUser mapUser mapPriority mapQueueToProject mapCFNames mapCFProc isAnon getRTAnonUsers );
+our @EXPORT = qw( AnonUser setAnonUser mapUser mapPriority mapQueueToProject mapResolution mapCFNames mapCFProc isAnon getRTAnonUsers );
 
 # Modify this to point to the Request Tracker installation location
 use lib "/opt/rt3/lib";
@@ -70,6 +70,72 @@ my %usermap = (
   'taimi' => 'tmulder',
 );
 
+# RT states to Jira resolutions
+my %resolutionmap = (
+  rejected => "Won't Fix",
+  deleted => "Won't Fix",
+  resolved => "Fixed",
+);
+
+# Map of RT priority numbers to Jira priorities
+my %prioritymap = (
+  3     =>      "Major",
+  2     =>      "Critical",
+  4     =>      "Minor",
+  1     =>      "Blocker",
+  5     =>      "Trivial",
+  99    =>      "Blocker",
+  0     =>      "Trivial",
+  15    =>      "Major",
+  10    =>      "Major",
+);
+
+my %queuemap = (
+  General       => "SYS",
+  LACOFD        => "LACOFD",
+  ROADNet       => "ROADNET",
+  ANZA          => "ANZA",
+  SysAdmin      => "SYS",
+  webapps       => "WWW",
+  Backups       => "BACKUP",
+  WebDev        => "WWW",
+  USArray       => "TA",
+  HiSeasNet     => "HSN",
+  PBO           => "PBO",
+);
+
+# Map of RT Custom Field names to their Jira names, and a processing function to handle multple values for a field.
+# defaults are specifed in the "-default-" record
+#
+# If no jiraname is specified, it defaults to the RT Field Name
+my %cfmap = (
+  "Documentation Link" => { 
+    jiraname => "Documentation Link", 
+    procfunc => \&JellyWriter::multiurl2textfield,
+  },
+  "Vendor Ticket #" => {
+    jiraname => "Vendor Ticket Id",
+  },
+  "Sat Station" => {
+    jiraname => "Satellite Station",
+    procfunc => \&JellyWriter::multitext2multiselect,
+  },
+  Server => {
+    jiraname => "Hosts Affected",
+  },
+  "-default-" => {
+    procfunc => \&JellyWriter::multitext2textfield,
+  }
+);
+
+sub mapResolution($){
+  my $rtstatus=shift;
+  my $res="Fixed";
+
+  $res = $resolutionmap{$rtstatus} if exists $resolutionmap{$rtstatus};
+  return $res;
+}
+
 # Function to map RT users to Jira users
 #
 # Since we are not creating new Jira users automatically, any unknown email
@@ -111,18 +177,6 @@ sub mapUser($) {
   return $jirauser;
 }
 
-# Map of RT priority numbers to Jira priorities
-my %prioritymap = (
-  3     =>      "Major",
-  2     =>      "Critical",
-  4     =>      "Minor",
-  1     =>      "Blocker",
-  5     =>      "Trivial",
-  99    =>      "Blocker",
-  0     =>      "Trivial",
-  15    =>      "Major",
-  10    =>      "Major",
-);
 
 # Function to map RT priorities to Jira Priorities
 sub mapPriority($){
@@ -139,20 +193,6 @@ sub mapPriority($){
   return $priority;
 }
 
-my %queuemap = (
-  General       => "SYS",
-  LACOFD        => "LACOFD",
-  ROADNet       => "ROADNET",
-  ANZA          => "ANZA",
-  SysAdmin      => "SYS",
-  webapps       => "WWW",
-  Backups       => "BACKUP",
-  WebDev        => "WWW",
-  USArray       => "TA",
-  HiSeasNet     => "HSN",
-  PBO           => "PBO",
-);
-
 # Map RT Quenename to Jira project Key
 sub mapQueueToProject($){
   my $queue=shift;
@@ -168,30 +208,6 @@ sub mapQueueToProject($){
   }
   return $queue;
 }
-
-# Map of RT Custom Field names to their Jira names, and a processing function to handle multple values for a field.
-# defaults are specifed in the "-default-" record
-#
-# If no jiraname is specified, it defaults to the RT Field Name
-my %cfmap = (
-  "Documentation Link" => { 
-    jiraname => "Documentation Link", 
-    procfunc => \&JellyWriter::multiurl2textfield,
-  },
-  "Vendor Ticket #" => {
-    jiraname => "Vendor Ticket Id",
-  },
-  "Sat Station" => {
-    jiraname => "Satellite Station",
-    procfunc => \&JellyWriter::multitext2multiselect,
-  },
-  Server => {
-    jiraname => "Hosts Affected",
-  },
-  "-default-" => {
-    procfunc => \&JellyWriter::multitext2textfield,
-  }
-);
 
 # Map RT Custom Field Names to Jira Custom Field Names
 sub mapCFNames ($) {

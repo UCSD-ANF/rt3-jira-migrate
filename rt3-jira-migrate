@@ -244,20 +244,6 @@ sub processTicketTransactions($) {
   }
 }
 
-# RT states to Jira resolutions
-my %resolutionmap = (
-  rejected => "Won't Fix",
-  deleted => "Won't Fix",
-  resolved => "Fixed",
-);
-
-sub mapResolution($){
-  my $rtstatus=shift;
-  my $res="Fixed";
-
-  $res = $resolutionmap{$rtstatus} if exists $resolutionmap{$rtstatus};
-  return $res;
-}
 
 # process a transaction that results in a Jira comment
 sub Transaction2Comment($) {
