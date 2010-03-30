@@ -8,7 +8,7 @@ username = getpass.getuser()
 password = getpass.getpass()
 
 # log in
-client = Client('https://anfweb-dev.ucsd.edu/jira/rpc/soap/jirasoapservice-v2?wsdl')
+client = Client('https://anf.ucsd.edu/jira/rpc/soap/jirasoapservice-v2?wsdl')
 auth = client.service.login(username, password)
 
 # get all customfields on the jira instance and find the one named RT3 Ticket Number
