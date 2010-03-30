@@ -41,30 +41,30 @@ sub _Init {
   my $self = shift;
   my %args = (
     Filename => undef,
-    IssueKey => "ik",
+    IssueKeyVarName => "ik",
 
     @_
   );
 
   $self->{'Filename'} = $args{'Filename'};
-  $self->{'IssueKey'} = $args{'IssueKey'};
+  $self->{'IssueKeyVarName'} = $args{'IssueKeyVarName'};
   $self->{'_jellystarted'} = 0;
 
 }
 
-sub IssueKey {
+sub IssueKeyVarName {
   my $self = shift;
-  return $self->{'IssueKey'};
+  return $self->{'IssueKeyVarName'};
 }
 
-sub setIssueKey {
+sub setIssueKeyVarName {
   my $self = shift;
-  $self->{'IssueKey'}=shift;
+  $self->{'IssueKeyVarName'}=shift;
 }
 
 sub jellyWkFlowStartProgress{
   my $self = shift;
-  my $key=$self->IssueKey();
+  my $key=$self->IssueKeyVarName();
   my $user=shift;
   my @params=(
     key => '${'.$key.'}',
@@ -80,7 +80,7 @@ sub jellyWkFlowStartProgress{
 
 sub jellyWkFlowStopProgress{
   my $self = shift;
-  my $key=$self->IssueKey();
+  my $key=$self->IssueKeyVarName();
   my $user=shift;
   my @params=(
     key=>'${'.$key.'}',
@@ -96,7 +96,7 @@ sub jellyWkFlowStopProgress{
 
 sub jellyWkFlowCloseIssue{
   my $self=shift;
-  my $key=$self->IssueKey();
+  my $key=$self->IssueKeyVarName();
   my $resolution=shift;
   my $user=shift;
   my @params=(
@@ -114,7 +114,7 @@ sub jellyWkFlowCloseIssue{
 
 sub jellyWkFlowReopenIssue{
   my $self=shift;
-  my $key=$self->IssueKey();
+  my $key=$self->IssueKeyVarName();
   my $user=shift;
 
   my @params=(
@@ -133,7 +133,7 @@ sub jellyWkFlowReopenIssue{
 # Output Jira Jelly to create a ticket.
 sub jellyStartCreateIssue{
   my $self=shift;
-  my $issueKeyVar=$self->IssueKey();
+  my $issueKeyVar=$self->IssueKeyVarName();
   my $projkey=shift;
   my $summary=shift;
   my $priority=shift;
@@ -188,7 +188,7 @@ sub jellyAddCustomFieldValue ($$){
 # Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
 sub jellyAddComment($$$){
   my $self=shift;
-  my $key=$self->IssueKey();
+  my $key=$self->IssueKeyVarName();
   my $commenter = shift;
   my $date = shift;
   my $comment = shift;

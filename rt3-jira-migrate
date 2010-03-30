@@ -347,7 +347,7 @@ sub fmtDateSQL2Jelly ($) {
 sub processTicket($) {
   my $ticket = shift;
   print STDERR "Processing RT Ticket #" . $ticket->Id . "\n";
-  $jellywriter->setIssueKey("rt".$ticket->Id);
+  $jellywriter->setIssueKeyVarName("rt".$ticket->Id);
 
   &processTicketObj($ticket);
 
