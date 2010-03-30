@@ -6,6 +6,7 @@ use strict;
 #use HTTP::Async;
 use LWP::UserAgent;
 use HTTP::Request;
+use HTML::TreeBuilder;
 use Term::ReadKey;
 use DirHandle;
 use URI;
@@ -20,17 +21,13 @@ my $CONCURREQ=4; # number of concurrent requests
 my $successstr="Jelly script completed successfully";
 my $jellyrunner_path="secure/admin/util/JellyRunner.jspa";
 
-# MAIN
 
-$JIRAPASS=getJiraPasswd();
-my @jellyfiles=getjellyfilenames($JELLYDIR);
-my $ua=LWP::UserAgent->new();
-my $response; # HTTP::Response returned from LWP::UserAgent->get
+#######################
 
-$ua->timeout(300); # Set timeout to 5 minutes, as some jelly scripts take longer to process than others.
-
-# run each request
-foreach my $fn (@jellyfiles) {
+sub runjellyscript ($$){
+  my $ua=shift; # LWP::UserAgent object preconfigured
+  my $fn=shift;
+  my $response; # HTTP::Response returned from LWP::UserAgent->get
   my $uri=URI->new($JIRABASEURL . $jellyrunner_path);
   my @url_params=(
     os_username => $JIRAUSER,
@@ -50,15 +47,14 @@ foreach my $fn (@jellyfiles) {
     }
     else {
       print STDERR "ERROR: An error occurred during processing. See logs.\n";
+      printJellyError($content);
     }
   }
   else {
-    die $response->status_line;
+    print $response->status_line;
   }
+
 }
-
-
-#######################
 
 # Get password
 sub getJiraPasswd {
@@ -72,6 +68,29 @@ sub getJiraPasswd {
   return $password;
 }
 
+# print out the error if there is one
+sub printJellyError {
+  my $content = shift;
+  my $tree = HTML::TreeBuilder->new_from_content($content);
+
+  # do stuff
+  # look for div id="scriptException"
+  my $errordiv = $tree->look_down( 
+    "_tag" => "div",
+    id => "scriptException",
+  );
+  if ($errordiv) {
+    print STDERR $errordiv->as_text(skip_dels => 1);
+  } else { 
+    print STDERR "Couldn't find scriptException block in content. Here's the raw html, figure it out:\n";
+    print STDERR "----------------------\n$content\n-------------------------\n";
+  }
+  print "\n";
+
+  # destroy tree
+  $tree = $tree->delete;
+
+}
 # get list of all filenames in JELLYDIR ending in .jelly, sorted
 sub getjellyfilenames {
   my $dir=shift;
@@ -82,3 +101,19 @@ sub getjellyfilenames {
   grep { /\.jelly$/ }   # choose only files ending in ".jelly"
   $dh->read();          # read all entries
 }
+
+#############################
+# MAIN
+
+$JIRAPASS=getJiraPasswd();
+my @jellyfiles=getjellyfilenames($JELLYDIR);
+my $ua=LWP::UserAgent->new();
+
+$ua->timeout(300); # Set timeout to 5 minutes, as some jelly scripts take longer to process than others.
+
+# run each request
+foreach my $fn (@jellyfiles) {
+  runjellyscript($ua, $fn);
+}
+
+
