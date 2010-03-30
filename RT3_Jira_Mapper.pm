@@ -68,6 +68,7 @@ my %usermap = (
   'kent' => 'lindquist',
   'clemesha@gmail.com' => 'aclemesh',
   'taimi' => 'tmulder',
+  'gulsum' => 'gkarasu',
 );
 
 # RT states to Jira resolutions
