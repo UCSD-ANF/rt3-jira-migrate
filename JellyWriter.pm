@@ -26,6 +26,36 @@ sub new {
   return $self;
 }
 
+sub _Init {
+  my $self = shift;
+  my %args = (
+    Filename => undef,
+    IssueKeyVarName => "ik",
+    IssueKey => undef,
+
+    @_
+  );
+
+  $self->{'Filename'} = $args{'Filename'};
+  $self->{'IssueKeyVarName'} = $args{'IssueKeyVarName'};
+  $self->{'_jellystarted'} = 0;
+
+}
+
+# determine if we should print out an issue key variable or an actual issue key
+# Jira Jelly lets you specify a variable name to store the issue key of a
+# newly created issue for later key tags.
+# This object defaults to using an issue key variable unless an explicit value
+# has been specified for the Issue Key
+sub _useIssueKeyVar {
+  my $self=shift;
+  if ( $self->{'IssueKey'} ) {
+    return 0;
+  } else {
+    return 1;
+  }
+}
+
 sub Writer {
   my $self=shift;
   return $self->{'_writer'};
@@ -35,21 +65,6 @@ sub _setWriter {
   my $self=shift;
   my $writer=shift;
   $self->{'_writer'}=$writer;
-}
-
-sub _Init {
-  my $self = shift;
-  my %args = (
-    Filename => undef,
-    IssueKeyVarName => "ik",
-
-    @_
-  );
-
-  $self->{'Filename'} = $args{'Filename'};
-  $self->{'IssueKeyVarName'} = $args{'IssueKeyVarName'};
-  $self->{'_jellystarted'} = 0;
-
 }
 
 sub IssueKeyVarName {
@@ -62,17 +77,37 @@ sub setIssueKeyVarName {
   $self->{'IssueKeyVarName'}=shift;
 }
 
+sub IssueKey {
+  $_ ->{'IssueKey'};
+}
+
+sub setIssueKey {
+  my $self=shift;
+  my $keyname=shift;
+  $self->{'IssueKey'}=$keyname;
+}
+
+sub _getWriterKeyVal {
+  my $self = shift;
+  # check if we should use a variable or issue key
+  if ( $self->_useIssueKeyVar() ) {
+    return '${'.$self->IssueKeyVarName().'}';
+  } else {
+    return $self->IssueKey();
+  }
+}
+
 sub jellyWkFlowStartProgress{
   my $self = shift;
-  my $key=$self->IssueKeyVarName();
   my $user=shift;
-  my @params=(
-    key => '${'.$key.'}',
+  my @writerparams=(
     workflowAction => 'Start Progress',
   );
-  push (@params, user=>$user) if $user;
 
-  $self->Writer->emptyTag('jira:TransitionWorkflow',@params);
+  push ( @writerparams, key     => $self->_getWriterKeyVal() );
+  push ( @writerparams, user    => $user ) if $user;
+
+  $self->Writer->emptyTag('jira:TransitionWorkflow',@writerparams);
 
   # Log the user mapping and return
   $users{$user}++ if $user;
@@ -80,15 +115,15 @@ sub jellyWkFlowStartProgress{
 
 sub jellyWkFlowStopProgress{
   my $self = shift;
-  my $key=$self->IssueKeyVarName();
   my $user=shift;
-  my @params=(
-    key=>'${'.$key.'}',
+  my @writerparams=(
     workflowAction=> 'Stop Progress',
   );
-  push (@params, user=>$user) if $user;
 
-  $self->Writer->emptyTag('jira:TransitionWorkflow', @params);
+  push ( @writerparams, key     => $self->_getWriterKeyVal() );
+  push ( @writerparams, user    => $user ) if $user;
+
+  $self->Writer->emptyTag('jira:TransitionWorkflow', @writerparams);
 
   # Log the user mapping and return
   $users{$user}++ if $user;
@@ -96,17 +131,17 @@ sub jellyWkFlowStopProgress{
 
 sub jellyWkFlowCloseIssue{
   my $self=shift;
-  my $key=$self->IssueKeyVarName();
   my $resolution=shift;
   my $user=shift;
-  my @params=(
+  my @writerparams=(
     workflowAction => 'Close Issue',
-    key => '${'.$key.'}',
   );
-  push (@params, user => $user) if $user;
-  push (@params, resolution => $resolution) if $resolution;
 
-  $self->Writer->emptyTag('jira:TransitionWorkflow', @params);
+  push ( @writerparams, key     => $self->_getWriterKeyVal() );
+  push ( @writerparams, user    => $user ) if $user;
+  push ( @writerparams, resolution => $resolution ) if $resolution;
+
+  $self->Writer->emptyTag('jira:TransitionWorkflow', @writerparams);
 
   # Log the user mapping and return
   $users{$user}++ if $user;
@@ -114,17 +149,16 @@ sub jellyWkFlowCloseIssue{
 
 sub jellyWkFlowReopenIssue{
   my $self=shift;
-  my $key=$self->IssueKeyVarName();
   my $user=shift;
 
-  my @params=(
-    key=>'${'.$key.'}',
+  my @writerparams=(
     workflowAction=>'Reopen Issue',
   );
 
-  push (@params, 'user'=>$user) if $user;
+  push ( @writerparams, key     => $self->_getWriterKeyVal() );
+  push ( @writerparams, user    => $user ) if $user;
 
-  $self->Writer->emptyTag('jira:TransitionWorkflow', @params);
+  $self->Writer->emptyTag('jira:TransitionWorkflow', @writerparams);
 
   # Log the user mapping and return
   $users{$user}++ if $user;
@@ -133,6 +167,15 @@ sub jellyWkFlowReopenIssue{
 # Output Jira Jelly to create a ticket.
 sub jellyStartCreateIssue{
   my $self=shift;
+
+  # check to see if it's ok to create an issue at this point
+  if ( $self->{'_inCreateIssueBlock'} ) { 
+    die "Can't create an Issue inside of an issue";
+  } 
+
+  $self->{'_inCreateIssueBlock'}=1;
+
+  # handle args
   my $issueKeyVar=$self->IssueKeyVarName();
   my $projkey=shift;
   my $summary=shift;
@@ -170,15 +213,27 @@ sub jellyStartCreateIssue{
 # Output Jira Jelly to close a create ticket block.
 sub jellyFinishCreateTicket(){
   my $self=shift;
+
+  # check to see if we should be closing out an issue
+  if ( ! $self->{'_inCreateIssueBlock'} ) {
+    die "Not in a create issue block";
+  }
+
   $self->Writer->endTag('jira:CreateIssue');
+  $self->{'_inCreateIssueBlock'}=0;
 }
 
 # Output Jira Jelly Custom Field Value. This must be called within a jellyStartCreateIssue
 # and a jellyFinishCreateTicket block
-sub jellyAddCustomFieldValue ($$){
+sub jellyAddCustomFieldValue ($$$){
   my $self=shift;
   my $fieldname=shift;
   my $value=shift;
+
+  # check to see if we can write a custom field
+  if ( ! $self->{'_inCreateIssueBlock'} ) {
+    die "Can't add custom field values outside of a Create Issue block";
+  }
 
   $self->Writer->emptyTag('jira:AddCustomFieldValue',
     name=>$fieldname, value=>$value);
@@ -186,25 +241,33 @@ sub jellyAddCustomFieldValue ($$){
 }
 
 # Output Jira Jelly to add a comment. Assumes that the issueKeyVar of the previous ticket was set to "key"
-sub jellyAddComment($$$){
+sub jellyAddComment {
   my $self=shift;
-  my $key=$self->IssueKeyVarName();
   my $commenter = shift;
   my $date = shift;
   my $comment = shift;
 
-  $self->Writer->emptyTag('jira:AddComment',
-    'issue-key'=>'${'.$key.'}',
-    commenter=>$commenter,
-    created=>$date,
-    updated=>$date,
-    comment=>escapeJellyReservedChars(cleanXML($comment)));
+  # check to see if it's ok to add a comment
+  if ( $self->{'_inCreateIssueBlock'} ) {
+    die "Can't create a comment inside of a create issue block";
+  }
+  
+  my @writerparams = (
+    commenter   => $commenter,
+    created     => $date,
+    updated     => $date,
+    comment     => escapeJellyReservedChars(cleanXML($comment)),
+  );
+
+  push ( @writerparams, 'issue-key' => $self->_getWriterKeyVal() );
+
+  $self->Writer->emptyTag('jira:AddComment', @writerparams);
 }
 
 sub startJellyOutput ($) {
   my $self = shift;
 
-  croak("Trying to startJellyOutput on a file that already has been started",@_) if $self->{'_jellystarted'};
+  die("Trying to startJellyOutput on a file that already has been started",@_) if $self->{'_jellystarted'};
   # Start outputting XML
   $self->{'_output'} = new IO::File( ">" . $self->{'Filename'} );
   $self->_setWriter(new XML::Writer(
@@ -227,7 +290,7 @@ sub startJellyOutput ($) {
 sub finishJellyOutput () {
   my $self = shift;
 
-  croak ("Trying to finishJellyOutput on a file that is not open", @_) unless $self->{'_jellystarted'};
+  die ("Trying to finishJellyOutput on a file that is not open", @_) unless $self->{'_jellystarted'};
   # Done with Jelly
   $self->Writer->endTag('JiraJelly');
 
