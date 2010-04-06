@@ -1,0 +1,69 @@
+#!/usr/bin/env perl
+
+use warnings;
+use strict;
+
+package main;
+
+# Modify this to point to the Request Tracker installation
+use lib "/opt/rt3/lib";
+
+use JellyWriter;
+use RT3_Jira_Mapper;
+use Data::Dumper;
+
+# Import RT's API
+use RT::Interface::CLI qw(CleanEnv loc);
+use RT::Links;
+
+my $outdir="/home/davis/src/IGPP/rt3-jira-migrate/data";
+my $outfile="jiralinks.jelly";
+
+my $jellywriter; # JellyWriter object
+
+# Initialize RT
+sub initRT {
+  CleanEnv();
+  RT::LoadConfig();
+  RT::Init();
+
+  return 1;
+}
+
+sub usage {
+  print "Usage: set-jira-issue-links issuemapfile\n";
+  print "\n";
+  print "Where issuemapfile is a map of Jira Issues to RT Tickets\n";
+}
+
+######### MAIN #########
+
+# Initialize our connection to RT
+initRT();
+
+# Get a list of all enabled links in RT
+my $links = new RT::Links($RT::SystemUser);
+$links->Limit( FIELD=>'id', OPERATOR=>'>', VALUE=>'0');
+
+my $numlinks = $links->Count; #total number of tickets
+print "Number of links: $numlinks\n";
+
+# Load the RT to Jira issue map
+my $mapfile=shift;
+loadJiraIKMapFile($mapfile);
+
+$jellywriter=new JellyWriter( Filename => $outdir . "/" . $outfile);
+$jellywriter->startJellyOutput($outdir . "/" . $outfile);
+while (my $link = $links->Next) {
+  my $linktype=$link->Type;
+  next if ($linktype eq "MergedInto");
+  next unless $link->LocalBase;
+  next unless $link->LocalTarget;
+  my $lval=getJiraIssueFromRTTicket($link->LocalBase);
+  my $rval=getJiraIssueFromRTTicket($link->LocalTarget);
+
+  print "$lval $linktype $rval\n";
+  $jellywriter->setIssueKey($lval);
+  $jellywriter->jellyLinkIssue($rval,mapLinkType($linktype));
+}
+$jellywriter->finishJellyOutput();
