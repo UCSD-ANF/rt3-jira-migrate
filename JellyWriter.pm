@@ -78,7 +78,8 @@ sub setIssueKeyVarName {
 }
 
 sub IssueKey {
-  $_ ->{'IssueKey'};
+  my $self=shift;
+  $self->{'IssueKey'};
 }
 
 sub setIssueKey {
@@ -262,6 +263,20 @@ sub jellyAddComment {
   push ( @writerparams, 'issue-key' => $self->_getWriterKeyVal() );
 
   $self->Writer->emptyTag('jira:AddComment', @writerparams);
+}
+
+# Link Issues
+sub jellyLinkIssue {
+  my $self = shift;
+  my $target = shift;
+  my $desc = shift;
+
+  my @writerparams = (
+    key => $self->_getWriterKeyVal(),
+    linkKey => $target,
+    linkDesc => $desc,
+  );
+  $self->Writer->emptyTag('jira:LinkIssue', @writerparams);
 }
 
 sub startJellyOutput ($) {

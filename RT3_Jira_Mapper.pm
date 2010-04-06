@@ -7,7 +7,7 @@ use warnings;
 use strict;
 
 our @ISA = qw(Exporter);
-our @EXPORT = qw( AnonUser setAnonUser mapUser mapPriority mapQueueToProject mapResolution mapCFNames mapCFProc isAnon getRTAnonUsers );
+our @EXPORT = qw( AnonUser setAnonUser mapUser mapPriority mapQueueToProject mapResolution mapCFNames mapCFProc isAnon getRTanonuserlog loadJiraIKMapFile getJiraIssueFromRTTicket getRTTicketFromJiraIssue mapLinkType );
 
 # Modify this to point to the Request Tracker installation location
 use lib "/opt/rt3/lib";
@@ -29,7 +29,7 @@ sub setAnonUser {
   $_anonuser=$uname if $uname;
 }
 
-my %anonusers; # List of RT users that are treated as the anonymous user, key is username, value is count
+my %anonuserlog; # List of RT users that are treated as the anonymous user, key is username, value is count
 
 # Map of RT users to Jira users
 my %usermap = (
@@ -129,6 +129,23 @@ my %cfmap = (
   }
 );
 
+
+# Hashes to map jira issue keys to rt tickets
+my %jira2rt = ();
+my %rt2jira = ();
+
+# Map of rt link types to Jira link types
+my %linktypemap = (
+  RefersTo => "refers to",
+  MemberOf => "is member of",
+  DependsOn => "depends on",
+);
+
+sub mapLinkType {
+  my $linktype=shift;
+  return $linktypemap{$linktype};
+}
+
 sub mapResolution($){
   my $rtstatus=shift;
   my $res="Fixed";
@@ -171,7 +188,7 @@ sub mapUser($) {
     else {
       # We have an anonymous user. Log it.
       $jirauser=AnonUser();
-      $anonusers{$name}++;
+      $anonuserlog{$name}++;
     }
 
   }
@@ -249,10 +266,47 @@ sub isAnon($){
   } 
 
   # User is anonymous
-  # don't log, we'll let mapUser do the logging in anonusers
+  # don't log, we'll let mapUser do the logging in anonuserlog
   return 1;
 }
 
-sub getRTAnonUsers {
-  return keys %anonusers;
+# Returns a list of users that were treated as anonymous
+sub getRTanonuserlog {
+  return keys %anonuserlog;
 }
+
+# load a file of jira issues mapped to rt tickets from a file
+# file format looks like this:
+# JIRA_ISSUE_KEY:RT_TICKET_NUM
+#
+# for example:
+# WWW-33:1759
+# WWW-32:1756
+# WWW-31:1726
+# WWW-30:1725
+# WWW-29:1723
+sub loadJiraIKMapFile {
+  my $fname=shift;
+  my ($jira, $rt);
+  open DFILE, $fname or die "Can't open issue key map file $fname";
+  while (<DFILE>) {
+    chomp;
+    ($jira,$rt) = split (":", $_);
+    $jira2rt{$jira}=$rt;
+    $rt2jira{$rt}=$jira;
+  }
+  close DFILE;
+}
+
+sub getJiraIssueFromRTTicket {
+  my $rt=shift;
+  return $rt2jira{$rt};
+}
+
+sub getRTTicketFromJiraIssue {
+  my $jira=shift;
+  return $jira2rt{$jira};
+}
+
+# Module loaded ok
+return 1;

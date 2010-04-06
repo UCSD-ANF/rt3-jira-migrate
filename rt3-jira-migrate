@@ -66,7 +66,7 @@ sub initRT {
   RT::LoadConfig(); # Load RT's config file
   RT::Init(); # Connect to the database. Set up logging
 
-  return
+  return 1;
 }
 
 sub getRTTicketDescription($){
@@ -356,7 +356,7 @@ sub processTicket($) {
 
 ######### MAIN #########
 
-# Initilize our connection to RT
+# Initialize our connection to RT
 initRT();
 
 # print banner
