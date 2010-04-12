@@ -54,6 +54,7 @@ loadJiraIKMapFile($mapfile);
 
 $jellywriter=new JellyWriter( Filename => $outdir . "/" . $outfile);
 $jellywriter->startJellyOutput($outdir . "/" . $outfile);
+
 while (my $link = $links->Next) {
   my $linktype=$link->Type;
   next if ($linktype eq "MergedInto");
@@ -63,6 +64,7 @@ while (my $link = $links->Next) {
   my $rval=getJiraIssueFromRTTicket($link->LocalTarget);
 
   print "$lval $linktype $rval\n";
+  $jellywriter->Writer->comment($link->LocalBase . " " . $linktype . " " . $link->LocalTarget);
   $jellywriter->setIssueKey($lval);
   $jellywriter->jellyLinkIssue($rval,mapLinkType($linktype));
 }
